@@ -1,5 +1,5 @@
 [project]
-name = "bench-bro"
+name = "benchbro"
 version = "0.0.1"
 description = "Benchmark library and CLI"
 readme = "README.md"

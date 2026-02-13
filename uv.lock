@@ -3,7 +3,7 @@ revision = 2
 requires-python = ">=3.13"
 
 [[package]]
-name = "bench-bro"
+name = "benchbro"
 version = "0.0.1"
 source = { virtual = "." }
 dependencies = [
