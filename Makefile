@@ -43,4 +43,5 @@ examples-test-run:
 		--output-md $(EXAMPLES_ARTIFACTS)/current.md
 
 examples-histogram:
+	@mkdir -p $(EXAMPLES_ARTIFACTS)
 	$(BENCHBRO) $(EXAMPLES_MODULE) --histogram

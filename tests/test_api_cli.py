@@ -139,6 +139,56 @@ def test_benchmark_warning_override_supersedes_case_warning() -> None:
     assert run.benchmarks[0].warning_threshold_pct == 7.0
 
 
+def test_case_comparison_metric_applies_when_benchmark_override_missing() -> None:
+    clear_registry()
+    case = Case(
+        name="comparison_case",
+        metric_type="time",
+        comparison_metric="p95_s",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.benchmark()
+    def bench_default_metric() -> int:
+        return 1
+
+    run = run_cases(list_cases())
+    assert len(run.benchmarks) == 1
+    assert run.benchmarks[0].comparison_metric == "p95_s"
+
+
+def test_benchmark_comparison_metric_override_supersedes_case_metric() -> None:
+    clear_registry()
+    case = Case(
+        name="comparison_override_case",
+        metric_type="time",
+        comparison_metric="median_s",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.benchmark(comparison_metric="mean_s")
+    def bench_metric_override() -> int:
+        return 1
+
+    run = run_cases(list_cases())
+    assert len(run.benchmarks) == 1
+    assert run.benchmarks[0].comparison_metric == "mean_s"
+
+
+def test_invalid_comparison_metric_raises_value_error() -> None:
+    clear_registry()
+    case = Case(name="invalid_metric_case", metric_type="time")
+
+    with pytest.raises(ValueError):
+        @case.benchmark(comparison_metric="peak_alloc_bytes")
+        def invalid_metric_bench() -> int:
+            return 1
+
+
 def test_case_memory_result_shape() -> None:
     clear_registry()
     case = Case(
@@ -313,6 +363,57 @@ def test_compare_runs_memory_uses_peak_alloc_threshold() -> None:
     assert regressions[0].metric_name == "peak_alloc_bytes"
     assert not regressions[0].is_regression
     assert regressions[0].is_warning
+
+
+def test_compare_runs_ops_per_sec_uses_inverse_regression_direction() -> None:
+    baseline = BenchmarkRun(
+        started_at="t0",
+        finished_at="t1",
+        python_version="3.13",
+        platform="test",
+        environment={},
+        benchmarks=[
+            BenchmarkResult(
+                case_name="throughput_case",
+                benchmark_name="ops",
+                case_type="cpu",
+                metric_type="time",
+                gc_control="disable_during_measure",
+                comparison_metric="ops_per_sec",
+                regression_threshold_pct=10.0,
+                iterations=1,
+                repeats=1,
+                metrics={"ops_per_sec": 100.0},
+                warning_threshold_pct=5.0,
+            )
+        ],
+    )
+    current = BenchmarkRun(
+        started_at="t2",
+        finished_at="t3",
+        python_version="3.13",
+        platform="test",
+        environment={},
+        benchmarks=[
+            BenchmarkResult(
+                case_name="throughput_case",
+                benchmark_name="ops",
+                case_type="cpu",
+                metric_type="time",
+                gc_control="disable_during_measure",
+                comparison_metric="ops_per_sec",
+                regression_threshold_pct=10.0,
+                iterations=1,
+                repeats=1,
+                metrics={"ops_per_sec": 80.0},
+                warning_threshold_pct=5.0,
+            )
+        ],
+    )
+    regressions = compare_runs(baseline, current)
+    assert len(regressions) == 1
+    assert regressions[0].metric_name == "ops_per_sec"
+    assert regressions[0].is_regression
 
 
 def test_read_json_defaults_threshold_for_older_payload(tmp_path: Path) -> None:

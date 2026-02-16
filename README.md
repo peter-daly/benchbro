@@ -49,6 +49,20 @@ def critical_path(payload: bytes) -> str:
     ...
 ```
 
+Comparison metric can be configured at case-level and benchmark-level:
+
+```python
+case = Case(name="hashing", comparison_metric="p95_s")
+
+@case.benchmark(comparison_metric="median_s")
+def critical_path(payload: bytes) -> str:
+    ...
+```
+
+Valid comparison metrics:
+- time: `median_s` (default), `mean_s`, `iqr_s`, `p95_s`, `stddev_s`, `ops_per_sec`
+- memory: `peak_alloc_bytes` (default), `net_alloc_bytes`, `peak_alloc_bytes_max`
+
 GC is disabled during measured iterations by default. To keep the interpreter GC behavior unchanged, set:
 
 ```python

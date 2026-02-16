@@ -17,6 +17,20 @@ from typing import Any, Callable, Literal
 MetricType = Literal["time", "memory"]
 GcControl = Literal["inherit", "disable_during_measure"]
 
+TIME_COMPARISON_METRICS = {
+    "mean_s",
+    "median_s",
+    "iqr_s",
+    "p95_s",
+    "stddev_s",
+    "ops_per_sec",
+}
+MEMORY_COMPARISON_METRICS = {
+    "peak_alloc_bytes",
+    "net_alloc_bytes",
+    "peak_alloc_bytes_max",
+}
+
 
 @dataclass
 class BenchmarkSettings:
@@ -35,6 +49,7 @@ class BenchmarkCase:
     metric_type: MetricType = "time"
     tags: tuple[str, ...] = ()
     input_func: Callable[[], Any] | None = None
+    comparison_metric: str | None = None
     regression_threshold_pct: float = 100.0
     warning_threshold_pct: float = 50.0
     settings: BenchmarkSettings = field(default_factory=BenchmarkSettings)
@@ -53,6 +68,7 @@ class BenchmarkResult:
     metrics: dict[str, float]
     environment: dict[str, str] = field(default_factory=dict)
     warning_threshold_pct: float = 50.0
+    comparison_metric: str | None = None
     time_samples_s: list[float] = field(default_factory=list)
 
 
@@ -152,6 +168,18 @@ def _memory_metrics(case: BenchmarkCase) -> dict[str, float]:
     }
 
 
+def default_comparison_metric(metric_type: MetricType) -> str:
+    if metric_type == "time":
+        return "median_s"
+    return "peak_alloc_bytes"
+
+
+def is_valid_comparison_metric(metric_type: MetricType, metric_name: str) -> bool:
+    if metric_type == "time":
+        return metric_name in TIME_COMPARISON_METRICS
+    return metric_name in MEMORY_COMPARISON_METRICS
+
+
 def _with_overrides(
     original: BenchmarkCase,
     repeats: int | None,
@@ -176,6 +204,7 @@ def _with_overrides(
         metric_type=original.metric_type,
         tags=original.tags,
         input_func=original.input_func,
+        comparison_metric=original.comparison_metric,
         regression_threshold_pct=original.regression_threshold_pct,
         warning_threshold_pct=original.warning_threshold_pct,
         settings=settings,
@@ -214,6 +243,7 @@ def run_cases(
                 case_type=case.case_type,
                 metric_type=case.metric_type,
                 gc_control=case.settings.gc_control,
+                comparison_metric=case.comparison_metric,
                 regression_threshold_pct=case.regression_threshold_pct,
                 environment=environment.copy(),
                 iterations=case.settings.min_iterations,
@@ -269,10 +299,19 @@ def filter_cases(
     return selected
 
 
-def _primary_metric(result: BenchmarkResult) -> tuple[str, float]:
-    if result.metric_type == "time":
-        return "median_s", result.metrics["median_s"]
-    return "peak_alloc_bytes", result.metrics["peak_alloc_bytes"]
+def _comparison_metric_candidates(
+    metric_type: MetricType, preferred: str | None
+) -> list[str]:
+    candidates: list[str] = []
+    if preferred:
+        candidates.append(preferred)
+    default_metric = default_comparison_metric(metric_type)
+    if default_metric not in candidates:
+        candidates.append(default_metric)
+    if metric_type == "time" and "mean_s" not in candidates:
+        # legacy fallback for older baselines that may not have median_s
+        candidates.append("mean_s")
+    return candidates
 
 
 def compare_runs(
@@ -289,19 +328,32 @@ def compare_runs(
         if base is None:
             continue
 
-        metric_name, base_value = _primary_metric(base)
-        _, cur_value = _primary_metric(cur)
+        preferred_metric = cur.comparison_metric
+        metric_name: str | None = None
+        base_value: float | None = None
+        cur_value: float | None = None
+        for candidate in _comparison_metric_candidates(cur.metric_type, preferred_metric):
+            if candidate in base.metrics and candidate in cur.metrics:
+                metric_name = candidate
+                base_value = base.metrics[candidate]
+                cur_value = cur.metrics[candidate]
+                break
+        if metric_name is None or base_value is None or cur_value is None:
+            continue
         if base_value == 0:
             continue
 
         percent_change = ((cur_value - base_value) / base_value) * 100.0
         warning_threshold_pct = cur.warning_threshold_pct
         threshold_pct = cur.regression_threshold_pct
-        # Keep strict threshold semantics while avoiding float rounding artifacts at equality boundaries.
-        is_regression = (percent_change - threshold_pct) > 1e-12
-        is_warning = (
-            percent_change - warning_threshold_pct
-        ) > 1e-12 and not is_regression
+        if metric_name == "ops_per_sec":
+            # For throughput metrics, lower values are regressions.
+            is_regression = (percent_change + threshold_pct) < -1e-12
+            is_warning = (percent_change + warning_threshold_pct) < -1e-12 and not is_regression
+        else:
+            # Keep strict threshold semantics while avoiding float rounding artifacts at equality boundaries.
+            is_regression = (percent_change - threshold_pct) > 1e-12
+            is_warning = (percent_change - warning_threshold_pct) > 1e-12 and not is_regression
         regressions.append(
             Regression(
                 case_name=cur.case_name,
@@ -339,6 +391,7 @@ def read_json(path: str | Path) -> BenchmarkRun:
             case_type=item["case_type"],
             metric_type=item["metric_type"],
             gc_control=item.get("gc_control", "disable_during_measure"),
+            comparison_metric=item.get("comparison_metric"),
             regression_threshold_pct=item.get("regression_threshold_pct", 100.0),
             environment=item.get("environment", run_environment),
             iterations=item["iterations"],
