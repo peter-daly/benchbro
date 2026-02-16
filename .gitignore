@@ -12,3 +12,4 @@ wheels/
 # Example outputs
 examples/artifacts/*.json
 examples/artifacts/*.csv
+examples/artifacts/*.md
