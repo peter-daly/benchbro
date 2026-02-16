@@ -37,6 +37,7 @@ class BenchmarkCase:
     tags: tuple[str, ...] = ()
     input_func: Callable[[], Any] | None = None
     regression_threshold_pct: float = 100.0
+    warning_threshold_pct: float = 50.0
     settings: BenchmarkSettings = field(default_factory=BenchmarkSettings)
 
 
@@ -52,6 +53,7 @@ class BenchmarkResult:
     repeats: int
     metrics: dict[str, float]
     environment: dict[str, str] = field(default_factory=dict)
+    warning_threshold_pct: float = 50.0
 
 
 @dataclass
@@ -72,7 +74,9 @@ class Regression:
     baseline_value: float
     current_value: float
     percent_change: float
+    warning_threshold_pct: float
     threshold_pct: float
+    is_warning: bool
     is_regression: bool
 
 
@@ -164,6 +168,7 @@ def _with_overrides(
         tags=original.tags,
         input_func=original.input_func,
         regression_threshold_pct=original.regression_threshold_pct,
+        warning_threshold_pct=original.warning_threshold_pct,
         settings=settings,
     )
 
@@ -199,6 +204,7 @@ def run_cases(
                 iterations=case.settings.min_iterations,
                 repeats=case.settings.repeats,
                 metrics=metrics,
+                warning_threshold_pct=case.warning_threshold_pct,
             )
         )
 
@@ -269,9 +275,11 @@ def compare_runs(
             continue
 
         percent_change = ((cur_value - base_value) / base_value) * 100.0
+        warning_threshold_pct = cur.warning_threshold_pct
         threshold_pct = cur.regression_threshold_pct
         # Keep strict threshold semantics while avoiding float rounding artifacts at equality boundaries.
         is_regression = (percent_change - threshold_pct) > 1e-12
+        is_warning = (percent_change - warning_threshold_pct) > 1e-12 and not is_regression
         regressions.append(
             Regression(
                 case_name=cur.case_name,
@@ -280,7 +288,9 @@ def compare_runs(
                 baseline_value=base_value,
                 current_value=cur_value,
                 percent_change=percent_change,
+                warning_threshold_pct=warning_threshold_pct,
                 threshold_pct=threshold_pct,
+                is_warning=is_warning,
                 is_regression=is_regression,
             )
         )
@@ -310,6 +320,7 @@ def read_json(path: str | Path) -> BenchmarkRun:
             iterations=item["iterations"],
             repeats=item["repeats"],
             metrics=item["metrics"],
+            warning_threshold_pct=item.get("warning_threshold_pct", item.get("regression_warning_pct", 50.0)),
         )
         for item in payload.get("benchmarks", [])
     ]
@@ -383,7 +394,6 @@ def _collect_environment_metadata() -> dict[str, str]:
     return {
         "python_version": platform.python_version(),
         "python_implementation": platform.python_implementation(),
-        "python_executable": sys.executable,
         "platform": platform.platform(),
         "system": uname.system,
         "release": uname.release,

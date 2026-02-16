@@ -84,20 +84,27 @@ def _print_regressions(regressions) -> int:
     table.add_column("Metric", style="magenta")
     table.add_column("Baseline", justify="right")
     table.add_column("Current", justify="right")
-    table.add_column("Threshold %", justify="right", style="yellow")
+    table.add_column("Thresholds", justify="right")
     table.add_column("Change %", justify="right")
     table.add_column("Status", justify="center")
 
     for item in regressions:
-        status = "[red]REGRESSION[/red]" if item.is_regression else "[green]OK[/green]"
-        change_style = "red" if item.is_regression else "green"
+        if item.is_regression:
+            status = "[red]REGRESSION[/red]"
+            change_style = "red"
+        elif item.is_warning:
+            status = "[yellow]WARNING[/yellow]"
+            change_style = "yellow"
+        else:
+            status = "[green]OK[/green]"
+            change_style = "green"
         table.add_row(
             item.case_name,
             item.benchmark_name,
             item.metric_name,
             f"{item.baseline_value:.6g}",
             f"{item.current_value:.6g}",
-            f"[yellow]{item.threshold_pct:.2f}%[/yellow]",
+            f"[yellow]{item.warning_threshold_pct:.2f}%[/yellow][white] / [/white][red]{item.threshold_pct:.2f}%[/red]",
             f"[{change_style}]{item.percent_change:+.2f}%[/{change_style}]",
             status,
         )

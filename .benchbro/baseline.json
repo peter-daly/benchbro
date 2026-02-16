@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-02-13T18:47:23.792785+00:00",
-  "finished_at": "2026-02-13T18:47:23.845398+00:00",
+  "started_at": "2026-02-16T11:00:07.955477+00:00",
+  "finished_at": "2026-02-16T11:00:08.009978+00:00",
   "python_version": "3.13.11",
   "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
   "environment": {
@@ -24,15 +24,31 @@
       "case_type": "cpu",
       "metric_type": "time",
       "gc_control": "disable_during_measure",
+      "regression_threshold_pct": 100.0,
       "iterations": 500,
       "repeats": 3,
       "metrics": {
-        "mean_s": 4.6744466666666665e-07,
-        "median_s": 4.6525e-07,
-        "p95_s": 4.6525e-07,
-        "stddev_s": 3.2820913386978427e-09,
-        "ops_per_sec": 2139290.639747735
-      }
+        "mean_s": 4.669446666666666e-07,
+        "median_s": 4.69668e-07,
+        "p95_s": 4.69668e-07,
+        "stddev_s": 8.98529945089322e-09,
+        "ops_per_sec": 2141581.3722396805
+      },
+      "environment": {
+        "python_version": "3.13.11",
+        "python_implementation": "CPython",
+        "python_executable": "/Users/peter.daly/WS/pete/bench-bro/.venv/bin/python3",
+        "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+        "system": "Darwin",
+        "release": "24.6.0",
+        "version": "Darwin Kernel Version 24.6.0: Wed Nov  5 21:32:34 PST 2025; root:xnu-11417.140.69.705.2~1/RELEASE_ARM64_T6020",
+        "machine": "arm64",
+        "processor": "arm",
+        "cpu_count": "12",
+        "gc_enabled_at_start": "True",
+        "gc_threshold": "2000,10,10"
+      },
+      "warning_threshold_pct": 50.0
     },
     {
       "case_name": "hashing",
@@ -40,15 +56,31 @@
       "case_type": "cpu",
       "metric_type": "time",
       "gc_control": "disable_during_measure",
+      "regression_threshold_pct": 100.0,
       "iterations": 500,
       "repeats": 3,
       "metrics": {
-        "mean_s": 4.6233333333333336e-07,
-        "median_s": 4.6200000000000003e-07,
-        "p95_s": 4.6200000000000003e-07,
-        "stddev_s": 2.934173061623258e-09,
-        "ops_per_sec": 2162941.6005767845
-      }
+        "mean_s": 4.471113333333333e-07,
+        "median_s": 4.46916e-07,
+        "p95_s": 4.46916e-07,
+        "stddev_s": 2.4199583100173845e-09,
+        "ops_per_sec": 2236579.405278626
+      },
+      "environment": {
+        "python_version": "3.13.11",
+        "python_implementation": "CPython",
+        "python_executable": "/Users/peter.daly/WS/pete/bench-bro/.venv/bin/python3",
+        "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+        "system": "Darwin",
+        "release": "24.6.0",
+        "version": "Darwin Kernel Version 24.6.0: Wed Nov  5 21:32:34 PST 2025; root:xnu-11417.140.69.705.2~1/RELEASE_ARM64_T6020",
+        "machine": "arm64",
+        "processor": "arm",
+        "cpu_count": "12",
+        "gc_enabled_at_start": "True",
+        "gc_threshold": "2000,10,10"
+      },
+      "warning_threshold_pct": 50.0
     },
     {
       "case_name": "allocations",
@@ -56,13 +88,29 @@
       "case_type": "memory",
       "metric_type": "memory",
       "gc_control": "disable_during_measure",
+      "regression_threshold_pct": 100.0,
       "iterations": 50,
       "repeats": 3,
       "metrics": {
         "peak_alloc_bytes": 12048.0,
         "net_alloc_bytes": 0.0,
         "peak_alloc_bytes_max": 12048.0
-      }
+      },
+      "environment": {
+        "python_version": "3.13.11",
+        "python_implementation": "CPython",
+        "python_executable": "/Users/peter.daly/WS/pete/bench-bro/.venv/bin/python3",
+        "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+        "system": "Darwin",
+        "release": "24.6.0",
+        "version": "Darwin Kernel Version 24.6.0: Wed Nov  5 21:32:34 PST 2025; root:xnu-11417.140.69.705.2~1/RELEASE_ARM64_T6020",
+        "machine": "arm64",
+        "processor": "arm",
+        "cpu_count": "12",
+        "gc_enabled_at_start": "True",
+        "gc_threshold": "2000,10,10"
+      },
+      "warning_threshold_pct": 50.0
     },
     {
       "case_name": "allocations",
@@ -70,13 +118,29 @@
       "case_type": "memory",
       "metric_type": "memory",
       "gc_control": "disable_during_measure",
+      "regression_threshold_pct": 100.0,
       "iterations": 50,
       "repeats": 3,
       "metrics": {
         "peak_alloc_bytes": 30520.0,
         "net_alloc_bytes": 0.0,
         "peak_alloc_bytes_max": 30520.0
-      }
+      },
+      "environment": {
+        "python_version": "3.13.11",
+        "python_implementation": "CPython",
+        "python_executable": "/Users/peter.daly/WS/pete/bench-bro/.venv/bin/python3",
+        "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+        "system": "Darwin",
+        "release": "24.6.0",
+        "version": "Darwin Kernel Version 24.6.0: Wed Nov  5 21:32:34 PST 2025; root:xnu-11417.140.69.705.2~1/RELEASE_ARM64_T6020",
+        "machine": "arm64",
+        "processor": "arm",
+        "cpu_count": "12",
+        "gc_enabled_at_start": "True",
+        "gc_threshold": "2000,10,10"
+      },
+      "warning_threshold_pct": 50.0
     }
   ]
 }

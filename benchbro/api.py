@@ -19,6 +19,7 @@ class Case:
     repeats: int = 5
     gc_control: GcControl = "disable_during_measure"
     regression_threshold_pct: float = 100.0
+    warning_threshold_pct: float = 50.0
     _input_func: Callable[[], Any] | None = field(default=None, init=False, repr=False)
 
     def input(self) -> Callable[[Callable[[], Any]], Callable[[], Any]]:
@@ -32,6 +33,7 @@ class Case:
         self,
         name: str | None = None,
         regression_threshold_pct: float | None = None,
+        warning_threshold_pct: float | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             benchmark_name = name or getattr(func, "__name__", "benchmark")
@@ -39,6 +41,11 @@ class Case:
                 self.regression_threshold_pct
                 if regression_threshold_pct is None
                 else regression_threshold_pct
+            )
+            effective_warning = (
+                self.warning_threshold_pct
+                if warning_threshold_pct is None
+                else warning_threshold_pct
             )
             _registry.register(
                 BenchmarkCase(
@@ -50,6 +57,7 @@ class Case:
                     tags=tuple(self.tags),
                     input_func=self._input_func,
                     regression_threshold_pct=effective_threshold,
+                    warning_threshold_pct=effective_warning,
                     settings=BenchmarkSettings(
                         warmup_iterations=self.warmup_iterations,
                         min_iterations=self.min_iterations,

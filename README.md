@@ -2,7 +2,7 @@
 
 `benchbro` is a Python benchmarking library and CLI with pytest-style discovery and rich terminal output.
 
-![Bench Bro Mascot](docs/assets/images/mascot-full-dark.png)
+![Bench Bro Mascot](https://raw.githubusercontent.com/peter-daly/benchbro/main/docs/assets/images/mascot-full-dark.png)
 
 ## Quick start
 
@@ -39,12 +39,12 @@ def sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 ```
 
-Regression tolerance defaults to `100.0` percent at the case level and can be overridden per benchmark:
+Regression thresholds default to `50.0` percent warning and `100.0` percent error at the case level, and can be overridden per benchmark:
 
 ```python
-case = Case(name="hashing", regression_threshold_pct=10.0)
+case = Case(name="hashing", warning_threshold_pct=5.0, regression_threshold_pct=10.0)
 
-@case.benchmark(regression_threshold_pct=3.0)
+@case.benchmark(warning_threshold_pct=2.0, regression_threshold_pct=3.0)
 def critical_path(payload: bytes) -> str:
     ...
 ```
@@ -98,7 +98,11 @@ Compare against baseline:
 uv run benchbro my_benchmarks.py
 ```
 
-Regression status uses each benchmark's effective threshold (`benchmark override -> case threshold -> 100% default`), and the comparison table shows the threshold for each row.
+Regression status uses each benchmark's effective thresholds (`benchmark override -> case threshold -> defaults`):
+- warning default: `50%`
+- error threshold default: `100%`
+
+The comparison table shows warning and threshold values for each row.
 
 ## End-to-end example
 

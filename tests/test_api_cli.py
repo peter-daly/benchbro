@@ -45,6 +45,7 @@ def test_case_groups_multiple_benchmarks() -> None:
     assert {r.case_name for r in run.benchmarks} == {"hashing"}
     assert {r.benchmark_name for r in run.benchmarks} == {"sha1", "sha256"}
     assert {r.regression_threshold_pct for r in run.benchmarks} == {100.0}
+    assert {r.warning_threshold_pct for r in run.benchmarks} == {50.0}
 
 
 def test_case_threshold_used_when_benchmark_override_missing() -> None:
@@ -65,6 +66,7 @@ def test_case_threshold_used_when_benchmark_override_missing() -> None:
     run = run_cases(list_cases())
     assert len(run.benchmarks) == 1
     assert run.benchmarks[0].regression_threshold_pct == 12.5
+    assert run.benchmarks[0].warning_threshold_pct == 50.0
 
 
 def test_benchmark_threshold_override_supersedes_case_threshold() -> None:
@@ -85,6 +87,47 @@ def test_benchmark_threshold_override_supersedes_case_threshold() -> None:
     run = run_cases(list_cases())
     assert len(run.benchmarks) == 1
     assert run.benchmarks[0].regression_threshold_pct == 7.5
+    assert run.benchmarks[0].warning_threshold_pct == 50.0
+
+
+def test_case_warning_used_when_benchmark_warning_override_missing() -> None:
+    clear_registry()
+    case = Case(
+        name="warning_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+        warning_threshold_pct=12.0,
+    )
+
+    @case.benchmark()
+    def bench_default_warning() -> int:
+        return 1
+
+    run = run_cases(list_cases())
+    assert len(run.benchmarks) == 1
+    assert run.benchmarks[0].warning_threshold_pct == 12.0
+
+
+def test_benchmark_warning_override_supersedes_case_warning() -> None:
+    clear_registry()
+    case = Case(
+        name="warning_override_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+        warning_threshold_pct=20.0,
+    )
+
+    @case.benchmark(warning_threshold_pct=7.0)
+    def bench_warning_override() -> int:
+        return 1
+
+    run = run_cases(list_cases())
+    assert len(run.benchmarks) == 1
+    assert run.benchmarks[0].warning_threshold_pct == 7.0
 
 
 def test_case_memory_result_shape() -> None:
@@ -122,6 +165,7 @@ def test_compare_runs_uses_current_result_threshold() -> None:
                 iterations=1,
                 repeats=1,
                 metrics={"mean_s": 1.0},
+                warning_threshold_pct=50.0,
             )
         ],
     )
@@ -142,13 +186,16 @@ def test_compare_runs_uses_current_result_threshold() -> None:
                 iterations=1,
                 repeats=1,
                 metrics={"mean_s": 1.2},
+                warning_threshold_pct=5.0,
             )
         ],
     )
     regressions = compare_runs(baseline, current)
     assert len(regressions) == 1
     assert regressions[0].threshold_pct == 10.0
+    assert regressions[0].warning_threshold_pct == 5.0
     assert regressions[0].is_regression
+    assert not regressions[0].is_warning
 
 
 def test_compare_runs_threshold_equality_is_not_regression() -> None:
@@ -169,6 +216,7 @@ def test_compare_runs_threshold_equality_is_not_regression() -> None:
                 iterations=1,
                 repeats=1,
                 metrics={"mean_s": 1.0},
+                warning_threshold_pct=50.0,
             )
         ],
     )
@@ -189,6 +237,7 @@ def test_compare_runs_threshold_equality_is_not_regression() -> None:
                 iterations=1,
                 repeats=1,
                 metrics={"mean_s": 1.1},
+                warning_threshold_pct=5.0,
             )
         ],
     )
@@ -196,6 +245,7 @@ def test_compare_runs_threshold_equality_is_not_regression() -> None:
     assert len(regressions) == 1
     assert regressions[0].percent_change == pytest.approx(10.0)
     assert not regressions[0].is_regression
+    assert regressions[0].is_warning
 
 
 def test_compare_runs_memory_uses_peak_alloc_threshold() -> None:
@@ -216,6 +266,7 @@ def test_compare_runs_memory_uses_peak_alloc_threshold() -> None:
                 iterations=1,
                 repeats=1,
                 metrics={"peak_alloc_bytes": 100.0},
+                warning_threshold_pct=50.0,
             )
         ],
     )
@@ -236,6 +287,7 @@ def test_compare_runs_memory_uses_peak_alloc_threshold() -> None:
                 iterations=1,
                 repeats=1,
                 metrics={"peak_alloc_bytes": 130.0},
+                warning_threshold_pct=25.0,
             )
         ],
     )
@@ -243,6 +295,7 @@ def test_compare_runs_memory_uses_peak_alloc_threshold() -> None:
     assert len(regressions) == 1
     assert regressions[0].metric_name == "peak_alloc_bytes"
     assert not regressions[0].is_regression
+    assert regressions[0].is_warning
 
 
 def test_read_json_defaults_threshold_for_older_payload(tmp_path: Path) -> None:
@@ -271,6 +324,7 @@ def test_read_json_defaults_threshold_for_older_payload(tmp_path: Path) -> None:
     run = read_json(path)
     assert run.benchmarks[0].regression_threshold_pct == 100.0
     assert run.benchmarks[0].environment == {}
+    assert run.benchmarks[0].warning_threshold_pct == 50.0
 
 
 def test_read_json_backfills_benchmark_environment_from_run_environment(tmp_path: Path) -> None:
@@ -318,6 +372,7 @@ def test_write_json_includes_threshold_field(tmp_path: Path) -> None:
                 iterations=1,
                 repeats=1,
                 metrics={"mean_s": 1.0},
+                warning_threshold_pct=22.0,
             )
         ],
     )
@@ -326,6 +381,7 @@ def test_write_json_includes_threshold_field(tmp_path: Path) -> None:
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["benchmarks"][0]["regression_threshold_pct"] == 33.0
+    assert payload["benchmarks"][0]["warning_threshold_pct"] == 22.0
     assert "environment" in payload["benchmarks"][0]
 
 
@@ -798,7 +854,7 @@ def test_cli_comparison_output_includes_threshold_column(tmp_path: Path, capsys:
     current_module = repo_root / "bench_current.py"
     current_module.write_text(
         "from benchbro import Case\n"
-        "case = Case(name='cmp_table_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0, regression_threshold_pct=5.0)\n"
+        "case = Case(name='cmp_table_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0, warning_threshold_pct=2.0, regression_threshold_pct=5.0)\n"
         "@case.benchmark(name='cmp_bench')\n"
         "def cmp_bench():\n"
         "    return 1\n",
@@ -818,7 +874,52 @@ def test_cli_comparison_output_includes_threshold_column(tmp_path: Path, capsys:
 
     output = capsys.readouterr().out
     assert "Benchmark Comparison" in output
+    assert "/" in output
     assert "5.00%" in output
+
+
+def test_cli_shows_warning_status_between_warning_and_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    clear_registry()
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
+    baseline_module = repo_root / "bench_warning_base.py"
+    baseline_module.write_text(
+        "from benchbro import Case\n"
+        "import time\n"
+        "case = Case(name='warn_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='warn_bench')\n"
+        "def warn_bench():\n"
+        "    time.sleep(0.002)\n",
+        encoding="utf-8",
+    )
+
+    current_module = repo_root / "bench_warning_current.py"
+    current_module.write_text(
+        "from benchbro import Case\n"
+        "import time\n"
+        "case = Case(name='warn_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0, warning_threshold_pct=10.0, regression_threshold_pct=100.0)\n"
+        "@case.benchmark(name='warn_bench')\n"
+        "def warn_bench():\n"
+        "    time.sleep(0.003)\n",
+        encoding="utf-8",
+    )
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        first_code = main([str(baseline_module), "--new-baseline", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        assert first_code == 0
+
+        second_code = main([str(current_module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        assert second_code == 0
+    finally:
+        os.chdir(original_cwd)
+
+    output = capsys.readouterr().out
+    assert "WARN" in output
 
 
 def test_cli_new_baseline_replaces_existing_baseline(tmp_path: Path) -> None:
