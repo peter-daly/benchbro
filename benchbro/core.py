@@ -6,7 +6,6 @@ import json
 import os
 import platform
 import statistics
-import sys
 import tracemalloc
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -154,8 +153,12 @@ def _with_overrides(
     min_iterations: int | None,
 ) -> BenchmarkCase:
     settings = BenchmarkSettings(
-        warmup_iterations=warmup if warmup is not None else original.settings.warmup_iterations,
-        min_iterations=min_iterations if min_iterations is not None else original.settings.min_iterations,
+        warmup_iterations=warmup
+        if warmup is not None
+        else original.settings.warmup_iterations,
+        min_iterations=min_iterations
+        if min_iterations is not None
+        else original.settings.min_iterations,
         repeats=repeats if repeats is not None else original.settings.repeats,
         gc_control=original.settings.gc_control,
     )
@@ -184,13 +187,19 @@ def run_cases(
     environment = _collect_environment_metadata()
 
     for original in cases:
-        case = _with_overrides(original, repeats=repeats, warmup=warmup, min_iterations=min_iterations)
+        case = _with_overrides(
+            original, repeats=repeats, warmup=warmup, min_iterations=min_iterations
+        )
 
         for _ in range(case.settings.warmup_iterations):
             _call_case(case)
 
         with _gc_control_context(case.settings.gc_control):
-            metrics = _time_metrics(case) if case.metric_type == "time" else _memory_metrics(case)
+            metrics = (
+                _time_metrics(case)
+                if case.metric_type == "time"
+                else _memory_metrics(case)
+            )
 
         results.append(
             BenchmarkResult(
@@ -243,7 +252,9 @@ def filter_cases(
     if names:
         wanted = set(names)
         selected = [
-            case for case in selected if case.case_name in wanted or case.benchmark_name in wanted
+            case
+            for case in selected
+            if case.case_name in wanted or case.benchmark_name in wanted
         ]
     if tags:
         wanted_tags = set(tags)
@@ -261,7 +272,9 @@ def compare_runs(
     baseline: BenchmarkRun,
     current: BenchmarkRun,
 ) -> list[Regression]:
-    baseline_map = {(r.case_name, r.benchmark_name, r.metric_type): r for r in baseline.benchmarks}
+    baseline_map = {
+        (r.case_name, r.benchmark_name, r.metric_type): r for r in baseline.benchmarks
+    }
     regressions: list[Regression] = []
 
     for cur in current.benchmarks:
@@ -279,7 +292,9 @@ def compare_runs(
         threshold_pct = cur.regression_threshold_pct
         # Keep strict threshold semantics while avoiding float rounding artifacts at equality boundaries.
         is_regression = (percent_change - threshold_pct) > 1e-12
-        is_warning = (percent_change - warning_threshold_pct) > 1e-12 and not is_regression
+        is_warning = (
+            percent_change - warning_threshold_pct
+        ) > 1e-12 and not is_regression
         regressions.append(
             Regression(
                 case_name=cur.case_name,
@@ -320,7 +335,9 @@ def read_json(path: str | Path) -> BenchmarkRun:
             iterations=item["iterations"],
             repeats=item["repeats"],
             metrics=item["metrics"],
-            warning_threshold_pct=item.get("warning_threshold_pct", item.get("regression_warning_pct", 50.0)),
+            warning_threshold_pct=item.get(
+                "warning_threshold_pct", item.get("regression_warning_pct", 50.0)
+            ),
         )
         for item in payload.get("benchmarks", [])
     ]
@@ -339,7 +356,9 @@ def write_csv(path: str | Path, run: BenchmarkRun) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", newline="", encoding="utf-8") as fp:
         writer = csv.writer(fp)
-        writer.writerow(["case", "benchmark", "metric_type", "gc_control", "metric_name", "value"])
+        writer.writerow(
+            ["case", "benchmark", "metric_type", "gc_control", "metric_name", "value"]
+        )
         for result in run.benchmarks:
             for metric_name, value in result.metrics.items():
                 writer.writerow(

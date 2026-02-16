@@ -18,6 +18,8 @@ dev = [
     "rust",
     "ty",
     "deptry",
+    "pre-commit",
+    "yamllint",
 ]
 
 [project.scripts]

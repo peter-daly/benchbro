@@ -12,7 +12,15 @@ from rich.console import Console
 from rich.table import Table
 
 from benchbro.api import get_registry
-from benchbro.core import compare_runs, filter_cases, read_json, run_cases, write_csv, write_json, write_markdown
+from benchbro.core import (
+    compare_runs,
+    filter_cases,
+    read_json,
+    run_cases,
+    write_csv,
+    write_json,
+    write_markdown,
+)
 
 BENCH_FILE_PATTERNS = (
     "bench_*.py",
@@ -151,7 +159,9 @@ def _matches_bench_pattern(path: Path) -> bool:
     return any(fnmatch.fnmatch(name, pattern) for pattern in BENCH_FILE_PATTERNS)
 
 
-def _discover_python_files(target_path: Path, include_all_python: bool = False) -> list[Path]:
+def _discover_python_files(
+    target_path: Path, include_all_python: bool = False
+) -> list[Path]:
     if target_path.is_file():
         if target_path.suffix != ".py":
             raise ValueError(f"Expected a Python file, got: {target_path}")
@@ -194,9 +204,13 @@ def _benchmark_key(result) -> tuple[str, str, str]:
     return (result.case_name, result.benchmark_name, result.metric_type)
 
 
-def _merge_missing_benchmarks_into_baseline(baseline_run, current_run, baseline_path: Path) -> int:
+def _merge_missing_benchmarks_into_baseline(
+    baseline_run, current_run, baseline_path: Path
+) -> int:
     existing = {_benchmark_key(item) for item in baseline_run.benchmarks}
-    missing = [item for item in current_run.benchmarks if _benchmark_key(item) not in existing]
+    missing = [
+        item for item in current_run.benchmarks if _benchmark_key(item) not in existing
+    ]
     if not missing:
         return 0
 

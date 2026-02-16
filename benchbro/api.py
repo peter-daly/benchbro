@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from benchbro.core import BenchmarkCase, BenchmarkRegistry, BenchmarkSettings, GcControl, MetricType
+from benchbro.core import (
+    BenchmarkCase,
+    BenchmarkRegistry,
+    BenchmarkSettings,
+    GcControl,
+    MetricType,
+)
 
 _registry = BenchmarkRegistry()
 

@@ -24,7 +24,14 @@ from benchbro.cli import main
 
 def test_case_groups_multiple_benchmarks() -> None:
     clear_registry()
-    case = Case(name="hashing", case_type="cpu", metric_type="time", repeats=1, min_iterations=1, warmup_iterations=0)
+    case = Case(
+        name="hashing",
+        case_type="cpu",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
 
     @case.input()
     def input_data() -> bytes:
@@ -132,7 +139,14 @@ def test_benchmark_warning_override_supersedes_case_warning() -> None:
 
 def test_case_memory_result_shape() -> None:
     clear_registry()
-    case = Case(name="mem_case", case_type="memory", metric_type="memory", repeats=2, min_iterations=3, warmup_iterations=0)
+    case = Case(
+        name="mem_case",
+        case_type="memory",
+        metric_type="memory",
+        repeats=2,
+        min_iterations=3,
+        warmup_iterations=0,
+    )
 
     @case.benchmark()
     def allocate() -> list[int]:
@@ -327,7 +341,9 @@ def test_read_json_defaults_threshold_for_older_payload(tmp_path: Path) -> None:
     assert run.benchmarks[0].warning_threshold_pct == 50.0
 
 
-def test_read_json_backfills_benchmark_environment_from_run_environment(tmp_path: Path) -> None:
+def test_read_json_backfills_benchmark_environment_from_run_environment(
+    tmp_path: Path,
+) -> None:
     payload = {
         "started_at": "t0",
         "finished_at": "t1",
@@ -488,7 +504,10 @@ def test_cli_run_writes_json(tmp_path: Path) -> None:
         assert payload["benchmarks"][0]["benchmark_name"] == "mod_case"
         assert "metrics" in payload["benchmarks"][0]
         assert "environment" in payload["benchmarks"][0]
-        assert payload["benchmarks"][0]["environment"]["python_version"] == payload["environment"]["python_version"]
+        assert (
+            payload["benchmarks"][0]["environment"]["python_version"]
+            == payload["environment"]["python_version"]
+        )
         markdown = markdown_path.read_text(encoding="utf-8")
         assert "# Benchbro Results" in markdown
         assert "| case | benchmark | metric_type |" in markdown
@@ -827,14 +846,19 @@ def test_cli_run_merges_new_benchmark_into_existing_baseline(tmp_path: Path) -> 
 
         baseline_json = repo_root / ".benchbro" / "baseline.json"
         payload = json.loads(baseline_json.read_text(encoding="utf-8"))
-        names = {(item["case_name"], item["benchmark_name"]) for item in payload["benchmarks"]}
+        names = {
+            (item["case_name"], item["benchmark_name"])
+            for item in payload["benchmarks"]
+        }
         assert ("merge_case", "one") in names
         assert ("merge_case", "two") in names
     finally:
         os.chdir(original_cwd)
 
 
-def test_cli_comparison_output_includes_threshold_column(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_comparison_output_includes_threshold_column(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     clear_registry()
 
     repo_root = tmp_path / "repo"
@@ -864,10 +888,30 @@ def test_cli_comparison_output_includes_threshold_column(tmp_path: Path, capsys:
     original_cwd = Path.cwd()
     try:
         os.chdir(repo_root)
-        first_code = main([str(baseline_module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        first_code = main(
+            [
+                str(baseline_module),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert first_code == 0
 
-        second_code = main([str(current_module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        second_code = main(
+            [
+                str(current_module),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert second_code in (0, 2)
     finally:
         os.chdir(original_cwd)
@@ -878,7 +922,9 @@ def test_cli_comparison_output_includes_threshold_column(tmp_path: Path, capsys:
     assert "5.00%" in output
 
 
-def test_cli_shows_warning_status_between_warning_and_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_shows_warning_status_between_warning_and_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     clear_registry()
 
     repo_root = tmp_path / "repo"
@@ -910,10 +956,31 @@ def test_cli_shows_warning_status_between_warning_and_error(tmp_path: Path, caps
     original_cwd = Path.cwd()
     try:
         os.chdir(repo_root)
-        first_code = main([str(baseline_module), "--new-baseline", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        first_code = main(
+            [
+                str(baseline_module),
+                "--new-baseline",
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert first_code == 0
 
-        second_code = main([str(current_module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        second_code = main(
+            [
+                str(current_module),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert second_code == 0
     finally:
         os.chdir(original_cwd)
@@ -981,7 +1048,10 @@ def test_cli_new_baseline_replaces_existing_baseline(tmp_path: Path) -> None:
 
         baseline_json = repo_root / ".benchbro" / "baseline.json"
         payload = json.loads(baseline_json.read_text(encoding="utf-8"))
-        names = {(item["case_name"], item["benchmark_name"]) for item in payload["benchmarks"]}
+        names = {
+            (item["case_name"], item["benchmark_name"])
+            for item in payload["benchmarks"]
+        }
         assert names == {("replace_case", "new_only")}
     finally:
         os.chdir(original_cwd)
