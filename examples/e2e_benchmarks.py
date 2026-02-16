@@ -25,7 +25,7 @@ hashing = Case(
     tags=["demo", "cpu"],
     warmup_iterations=1,
     min_iterations=500,
-    repeats=3,
+    repeats=20,
 )
 
 
@@ -57,7 +57,7 @@ allocations = Case(
     tags=["demo", "memory"],
     warmup_iterations=1,
     min_iterations=50,
-    repeats=3,
+    repeats=20,
 )
 
 

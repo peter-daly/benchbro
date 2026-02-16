@@ -53,6 +53,8 @@ def test_case_groups_multiple_benchmarks() -> None:
     assert {r.benchmark_name for r in run.benchmarks} == {"sha1", "sha256"}
     assert {r.regression_threshold_pct for r in run.benchmarks} == {100.0}
     assert {r.warning_threshold_pct for r in run.benchmarks} == {50.0}
+    assert all("iqr_s" in r.metrics for r in run.benchmarks)
+    assert all(len(r.time_samples_s) == 1 for r in run.benchmarks)
 
 
 def test_case_threshold_used_when_benchmark_override_missing() -> None:
@@ -159,6 +161,7 @@ def test_case_memory_result_shape() -> None:
     assert result.metric_type == "memory"
     assert "peak_alloc_bytes" in result.metrics
     assert "net_alloc_bytes" in result.metrics
+    assert result.time_samples_s == []
 
 
 def test_compare_runs_uses_current_result_threshold() -> None:
@@ -178,7 +181,7 @@ def test_compare_runs_uses_current_result_threshold() -> None:
                 regression_threshold_pct=100.0,
                 iterations=1,
                 repeats=1,
-                metrics={"mean_s": 1.0},
+                metrics={"mean_s": 1.0, "median_s": 1.0},
                 warning_threshold_pct=50.0,
             )
         ],
@@ -199,7 +202,7 @@ def test_compare_runs_uses_current_result_threshold() -> None:
                 regression_threshold_pct=10.0,
                 iterations=1,
                 repeats=1,
-                metrics={"mean_s": 1.2},
+                metrics={"mean_s": 1.2, "median_s": 1.2},
                 warning_threshold_pct=5.0,
             )
         ],
@@ -229,7 +232,7 @@ def test_compare_runs_threshold_equality_is_not_regression() -> None:
                 regression_threshold_pct=100.0,
                 iterations=1,
                 repeats=1,
-                metrics={"mean_s": 1.0},
+                metrics={"mean_s": 1.0, "median_s": 1.0},
                 warning_threshold_pct=50.0,
             )
         ],
@@ -250,7 +253,7 @@ def test_compare_runs_threshold_equality_is_not_regression() -> None:
                 regression_threshold_pct=10.0,
                 iterations=1,
                 repeats=1,
-                metrics={"mean_s": 1.1},
+                metrics={"mean_s": 1.1, "median_s": 1.1},
                 warning_threshold_pct=5.0,
             )
         ],
@@ -387,7 +390,7 @@ def test_write_json_includes_threshold_field(tmp_path: Path) -> None:
                 regression_threshold_pct=33.0,
                 iterations=1,
                 repeats=1,
-                metrics={"mean_s": 1.0},
+                metrics={"mean_s": 1.0, "median_s": 1.0},
                 warning_threshold_pct=22.0,
             )
         ],
@@ -399,6 +402,36 @@ def test_write_json_includes_threshold_field(tmp_path: Path) -> None:
     assert payload["benchmarks"][0]["regression_threshold_pct"] == 33.0
     assert payload["benchmarks"][0]["warning_threshold_pct"] == 22.0
     assert "environment" in payload["benchmarks"][0]
+    assert "time_samples_s" not in payload["benchmarks"][0]
+
+
+def test_read_json_accepts_time_samples_if_present(tmp_path: Path) -> None:
+    payload = {
+        "started_at": "t0",
+        "finished_at": "t1",
+        "python_version": "3.13",
+        "platform": "test",
+        "environment": {},
+        "benchmarks": [
+            {
+                "case_name": "sample_case",
+                "benchmark_name": "sample_bench",
+                "case_type": "cpu",
+                "metric_type": "time",
+                "gc_control": "disable_during_measure",
+                "regression_threshold_pct": 100.0,
+                "warning_threshold_pct": 50.0,
+                "iterations": 1,
+                "repeats": 1,
+                "metrics": {"median_s": 1.0, "mean_s": 1.0},
+                "time_samples_s": [1.0, 1.1, 0.9],
+            }
+        ],
+    }
+    path = tmp_path / "samples.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    run = read_json(path)
+    assert run.benchmarks[0].time_samples_s == [1.0, 1.1, 0.9]
 
 
 def test_cli_rejects_removed_fail_on_regression_flag(tmp_path: Path) -> None:
@@ -670,7 +703,7 @@ def test_cli_run_writes_default_outputs_to_repo_root(tmp_path: Path) -> None:
 
         default_json = repo_root / ".benchbro" / "current.json"
         default_csv = repo_root / ".benchbro" / "current.csv"
-        baseline_json = repo_root / ".benchbro" / "baseline.json"
+        baseline_json = repo_root / ".benchbro" / "baseline.local.json"
         assert not default_json.exists()
         assert not default_csv.exists()
         assert baseline_json.exists()
@@ -678,7 +711,7 @@ def test_cli_run_writes_default_outputs_to_repo_root(tmp_path: Path) -> None:
         os.chdir(original_cwd)
 
 
-def test_cli_run_creates_repo_baseline_json_when_missing(tmp_path: Path) -> None:
+def test_cli_run_creates_repo_local_baseline_json_when_missing(tmp_path: Path) -> None:
     clear_registry()
 
     repo_root = tmp_path / "repo"
@@ -711,7 +744,7 @@ def test_cli_run_creates_repo_baseline_json_when_missing(tmp_path: Path) -> None
         )
         assert code == 0
 
-        baseline_json = repo_root / ".benchbro" / "baseline.json"
+        baseline_json = repo_root / ".benchbro" / "baseline.local.json"
         assert baseline_json.exists()
         payload = json.loads(baseline_json.read_text(encoding="utf-8"))
         assert payload["benchmarks"][0]["case_name"] == "baseline_case"
@@ -719,6 +752,231 @@ def test_cli_run_creates_repo_baseline_json_when_missing(tmp_path: Path) -> None
         assert "environment" in payload
         assert "gc_enabled_at_start" in payload["environment"]
         assert "gc_threshold" in payload["environment"]
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_cli_run_creates_repo_ci_baseline_yaml_when_ci_flag_set(
+    tmp_path: Path,
+) -> None:
+    clear_registry()
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
+    benchmark_file = repo_root / "sample_benchmarks.py"
+    benchmark_file.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='baseline_ci_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='baseline_ci_bench')\n"
+        "def baseline_ci_bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        code = main(
+            [
+                str(benchmark_file),
+                "--ci",
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+        assert code == 0
+
+        baseline_json = repo_root / ".benchbro" / "baseline.local.json"
+        baseline_ci_yaml = repo_root / ".benchbro/baseline.ci.json"
+        assert not baseline_json.exists()
+        assert baseline_ci_yaml.exists()
+        payload = json.loads(baseline_ci_yaml.read_text(encoding="utf-8"))
+        assert payload["benchmarks"][0]["case_name"] == "baseline_ci_case"
+        assert payload["benchmarks"][0]["benchmark_name"] == "baseline_ci_bench"
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_cli_no_compare_skips_comparison_and_returns_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clear_registry()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
+    module = repo_root / "bench_no_compare.py"
+    module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='no_compare_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='bench')\n"
+        "def bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        assert main([str(module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"]) == 0
+        code = main([str(module), "--no-compare", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        assert code == 0
+    finally:
+        os.chdir(original_cwd)
+
+    output = capsys.readouterr().out
+    assert "Comparison skipped" in output
+
+
+def test_cli_no_compare_merges_new_benchmark(tmp_path: Path) -> None:
+    clear_registry()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
+    first_module = repo_root / "bench_first.py"
+    first_module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='no_compare_merge_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='one')\n"
+        "def one():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    second_module = repo_root / "bench_second.py"
+    second_module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='no_compare_merge_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='one')\n"
+        "def one():\n"
+        "    return 1\n"
+        "@case.benchmark(name='two')\n"
+        "def two():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        assert main([str(first_module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"]) == 0
+        assert main([str(second_module), "--no-compare", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"]) == 0
+        baseline_local = repo_root / ".benchbro" / "baseline.local.json"
+        payload = json.loads(baseline_local.read_text(encoding="utf-8"))
+        names = {(item["case_name"], item["benchmark_name"]) for item in payload["benchmarks"]}
+        assert ("no_compare_merge_case", "one") in names
+        assert ("no_compare_merge_case", "two") in names
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_cli_histogram_outputs_for_time_benchmarks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clear_registry()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+    module = repo_root / "bench_hist.py"
+    module.write_text(
+        "from benchbro import Case\n"
+        "import time\n"
+        "case = Case(name='hist_case', metric_type='time', repeats=5, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='hist_bench')\n"
+        "def hist_bench():\n"
+        "    time.sleep(0.0001)\n",
+        encoding="utf-8",
+    )
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        code = main([str(module), "--histogram", "--warmup", "0", "--repeats", "5", "--min-iterations", "1"])
+        assert code == 0
+    finally:
+        os.chdir(original_cwd)
+
+    output = capsys.readouterr().out
+    assert "Histogram: hist_case::hist_bench" in output
+
+
+def test_cli_histogram_memory_only_prints_info(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clear_registry()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+    module = repo_root / "bench_mem_hist.py"
+    module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='mem_hist_case', metric_type='memory', repeats=2, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='alloc')\n"
+        "def alloc():\n"
+        "    return [1,2,3]\n",
+        encoding="utf-8",
+    )
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        code = main([str(module), "--histogram", "--warmup", "0", "--repeats", "2", "--min-iterations", "1"])
+        assert code == 0
+    finally:
+        os.chdir(original_cwd)
+
+    output = capsys.readouterr().out
+    assert "No time samples available for histogram output." in output
+
+
+def test_cli_ci_no_compare_uses_ci_baseline_yaml(tmp_path: Path) -> None:
+    clear_registry()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+    module = repo_root / "bench_ci_no_compare.py"
+    module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='ci_no_compare_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='bench')\n"
+        "def bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        assert main([str(module), "--ci", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"]) == 0
+        code = main([str(module), "--ci", "--no-compare", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        assert code == 0
+        assert (repo_root / ".benchbro/baseline.ci.json").exists()
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_cli_new_baseline_takes_precedence_over_no_compare(tmp_path: Path) -> None:
+    clear_registry()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+    module = repo_root / "bench_new_over_no_compare.py"
+    module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='new_over_no_compare_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='bench')\n"
+        "def bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        code = main([str(module), "--new-baseline", "--no-compare", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        assert code == 0
+        assert (repo_root / ".benchbro" / "baseline.local.json").exists()
     finally:
         os.chdir(original_cwd)
 
@@ -844,7 +1102,7 @@ def test_cli_run_merges_new_benchmark_into_existing_baseline(tmp_path: Path) -> 
         )
         assert second_code == 0
 
-        baseline_json = repo_root / ".benchbro" / "baseline.json"
+        baseline_json = repo_root / ".benchbro" / "baseline.local.json"
         payload = json.loads(baseline_json.read_text(encoding="utf-8"))
         names = {
             (item["case_name"], item["benchmark_name"])
@@ -1046,7 +1304,7 @@ def test_cli_new_baseline_replaces_existing_baseline(tmp_path: Path) -> None:
         )
         assert second_code == 0
 
-        baseline_json = repo_root / ".benchbro" / "baseline.json"
+        baseline_json = repo_root / ".benchbro" / "baseline.local.json"
         payload = json.loads(baseline_json.read_text(encoding="utf-8"))
         names = {
             (item["case_name"], item["benchmark_name"])

@@ -64,16 +64,23 @@ uv run benchbro --repeats 10 --warmup 2
 When no target is provided, `benchbro` discovers benchmarks from:
 - `benchmarks/**/*.py` (relative to repo root)
 
-`benchbro` compares against the baseline by default (`.benchbro/baseline.json`).
+`benchbro` compares against the baseline by default (`.benchbro/baseline.local.json`).
 If the baseline is missing, benchbro creates it automatically.
 If new cases/benchmarks are introduced later, missing entries are merged into baseline.
 Pass `--new-baseline` to replace the entire baseline with the current run.
+Pass `--ci` to use `.benchbro/baseline.ci.json` for baseline read/write/compare.
+Pass `--no-compare` to skip comparison while still backfilling missing benchmark entries in baseline.
 
 By default, regular runs do not write artifacts.
 Use explicit output flags (`--output-json`, `--output-csv`, `--output-md`) when needed.
 
 The baseline is always written to:
-- `.benchbro/baseline.json`
+- `.benchbro/baseline.local.json` (default local mode)
+- `.benchbro/baseline.ci.json` when using `--ci`
+
+Recommended:
+- ignore `.benchbro/` for machine-local benchmarking artifacts.
+- commit `.benchbro/baseline.ci.json` for CI comparisons.
 
 If requested, markdown output can also be written with `--output-md`.
 
@@ -98,11 +105,25 @@ Compare against baseline:
 uv run benchbro my_benchmarks.py
 ```
 
+Render time benchmark histograms in terminal output:
+
+```bash
+uv run benchbro my_benchmarks.py --histogram
+```
+
+Skip comparison for a run while still maintaining baseline structure:
+
+```bash
+uv run benchbro my_benchmarks.py --no-compare
+```
+
 Regression status uses each benchmark's effective thresholds (`benchmark override -> case threshold -> defaults`):
 - warning default: `50%`
 - error threshold default: `100%`
 
 The comparison table shows warning and threshold values for each row.
+
+Histograms are terminal-only in v1 and are shown for time benchmarks.
 
 ## End-to-end example
 

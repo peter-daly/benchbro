@@ -4,6 +4,7 @@ import argparse
 import fnmatch
 import importlib
 import importlib.util
+import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -30,7 +31,8 @@ BENCH_FILE_PATTERNS = (
 )
 
 _CONSOLE = Console()
-BASELINE_JSON_PATH = Path(".benchbro/baseline.json")
+LOCAL_BASELINE_JSON_PATH = Path(".benchbro/baseline.local.json")
+CI_BASELINE_JSON_PATH = Path(".benchbro/baseline.ci.json")
 
 
 def _format_metric(value: float | None) -> str:
@@ -56,27 +58,39 @@ def _print_results(run) -> None:
         table = Table(title=f"Benchbro Results: {metric_type}")
         table.add_column("Case", style="cyan", no_wrap=True)
         table.add_column("Benchmark", style="bold")
-        table.add_column("Mean (s)", justify="right")
-        table.add_column("Median (s)", justify="right")
-        table.add_column("P95 (s)", justify="right")
-        table.add_column("StdDev (s)", justify="right")
-        table.add_column("Ops/s", justify="right")
-        table.add_column("Peak (B)", justify="right")
-        table.add_column("Net (B)", justify="right")
+        if metric_type == "time":
+            table.add_column("Mean (s)", justify="right")
+            table.add_column("Median (s)", justify="right")
+            table.add_column("IQR (s)", justify="right")
+            table.add_column("P95 (s)", justify="right")
+            table.add_column("StdDev (s)", justify="right")
+            table.add_column("Ops/s", justify="right")
+        else:
+            table.add_column("Peak (B)", justify="right")
+            table.add_column("Net (B)", justify="right")
+            table.add_column("Peak Max (B)", justify="right")
 
         for result in by_type[metric_type]:
             metrics = result.metrics
-            table.add_row(
-                result.case_name,
-                result.benchmark_name,
-                _format_metric(metrics.get("mean_s")),
-                _format_metric(metrics.get("median_s")),
-                _format_metric(metrics.get("p95_s")),
-                _format_metric(metrics.get("stddev_s")),
-                _format_metric(metrics.get("ops_per_sec")),
-                _format_metric(metrics.get("peak_alloc_bytes")),
-                _format_metric(metrics.get("net_alloc_bytes")),
-            )
+            if metric_type == "time":
+                table.add_row(
+                    result.case_name,
+                    result.benchmark_name,
+                    _format_metric(metrics.get("mean_s")),
+                    _format_metric(metrics.get("median_s")),
+                    _format_metric(metrics.get("iqr_s")),
+                    _format_metric(metrics.get("p95_s")),
+                    _format_metric(metrics.get("stddev_s")),
+                    _format_metric(metrics.get("ops_per_sec")),
+                )
+            else:
+                table.add_row(
+                    result.case_name,
+                    result.benchmark_name,
+                    _format_metric(metrics.get("peak_alloc_bytes")),
+                    _format_metric(metrics.get("net_alloc_bytes")),
+                    _format_metric(metrics.get("peak_alloc_bytes_max")),
+                )
         _CONSOLE.print(table)
 
 
@@ -120,6 +134,63 @@ def _print_regressions(regressions) -> int:
     return 2 if failing else 0
 
 
+def _build_histogram(
+    samples: list[float], bins: int = 10
+) -> list[tuple[float, float, int]]:
+    if not samples:
+        return []
+
+    if len(samples) == 1:
+        value = samples[0]
+        return [(value, value, 1)]
+
+    low = min(samples)
+    high = max(samples)
+    if math.isclose(low, high):
+        return [(low, high, len(samples))]
+
+    width = (high - low) / bins
+    counts = [0] * bins
+    for sample in samples:
+        if sample == high:
+            index = bins - 1
+        else:
+            index = int((sample - low) / width)
+            index = max(0, min(index, bins - 1))
+        counts[index] += 1
+
+    ranges: list[tuple[float, float, int]] = []
+    for i, count in enumerate(counts):
+        if count == 0:
+            continue
+        bin_low = low + (width * i)
+        bin_high = low + (width * (i + 1))
+        ranges.append((bin_low, bin_high, count))
+    return ranges
+
+
+def _print_histograms(run) -> None:
+    time_results = [r for r in run.benchmarks if r.metric_type == "time" and r.time_samples_s]
+    if not time_results:
+        _CONSOLE.print("[yellow]No time samples available for histogram output.[/yellow]")
+        return
+
+    for result in time_results:
+        histogram = _build_histogram(result.time_samples_s, bins=10)
+        if not histogram:
+            continue
+        max_count = max(count for _, _, count in histogram)
+        table = Table(title=f"Histogram: {result.case_name}::{result.benchmark_name}")
+        table.add_column("Range (s)", style="cyan")
+        table.add_column("Distribution", style="bold")
+        table.add_column("Count", justify="right")
+        for low, high, count in histogram:
+            bar_len = max(1, int((count / max_count) * 24))
+            bar = "█" * bar_len
+            table.add_row(f"{low:.6g} - {high:.6g}", bar, str(count))
+        _CONSOLE.print(table)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="benchbro")
     parser.add_argument(
@@ -136,6 +207,21 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-csv")
     parser.add_argument("--output-md")
     parser.add_argument("--new-baseline", action="store_true")
+    parser.add_argument(
+        "--histogram",
+        action="store_true",
+        help="Print per-time-benchmark histograms in terminal output.",
+    )
+    parser.add_argument(
+        "--no-compare",
+        action="store_true",
+        help="Skip baseline comparison; still backfill missing benchmark entries.",
+    )
+    parser.add_argument(
+        "--ci",
+        action="store_true",
+        help="Use baseline.ci.json for baseline read/write/compare.",
+    )
     return parser
 
 
@@ -147,11 +233,13 @@ def _find_repo_root(start: Path) -> Path:
     return current
 
 
-def _baseline_output_path() -> Path:
+def _baseline_output_path(use_ci: bool = False) -> Path:
     repo_root = _find_repo_root(Path.cwd())
     output_dir = repo_root / ".benchbro"
     output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir / BASELINE_JSON_PATH.name
+    if use_ci:
+        return output_dir / CI_BASELINE_JSON_PATH.name
+    return output_dir / LOCAL_BASELINE_JSON_PATH.name
 
 
 def _matches_bench_pattern(path: Path) -> bool:
@@ -248,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
         min_iterations=args.min_iterations,
     )
     _print_results(run)
+    if args.histogram:
+        _print_histograms(run)
 
     if args.output_json:
         write_json(args.output_json, run)
@@ -256,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.output_md:
         write_markdown(args.output_md, run)
 
-    baseline_path = _baseline_output_path()
+    baseline_path = _baseline_output_path(use_ci=args.ci)
     if args.new_baseline:
         write_json(baseline_path, run)
         _CONSOLE.print(f"[green]Saved new baseline:[/green] {baseline_path}")
@@ -265,6 +355,18 @@ def main(argv: list[str] | None = None) -> int:
     if not baseline_path.exists():
         write_json(baseline_path, run)
         _CONSOLE.print(f"[green]Saved baseline:[/green] {baseline_path}")
+        return 0
+
+    if args.no_compare:
+        baseline = read_json(baseline_path)
+        merged_count = _merge_missing_benchmarks_into_baseline(
+            baseline, run, baseline_path
+        )
+        if merged_count:
+            _CONSOLE.print(
+                f"[cyan]Merged {merged_count} new benchmark(s) into baseline:[/cyan] {baseline_path}"
+            )
+        _CONSOLE.print("[yellow]Comparison skipped (--no-compare).[/yellow]")
         return 0
 
     baseline = read_json(baseline_path)

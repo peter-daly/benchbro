@@ -53,6 +53,7 @@ class BenchmarkResult:
     metrics: dict[str, float]
     environment: dict[str, str] = field(default_factory=dict)
     warning_threshold_pct: float = 50.0
+    time_samples_s: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -101,7 +102,7 @@ def _call_case(case: BenchmarkCase) -> Any:
     return case.func(value)
 
 
-def _time_metrics(case: BenchmarkCase) -> dict[str, float]:
+def _time_metrics(case: BenchmarkCase) -> tuple[dict[str, float], list[float]]:
     samples: list[float] = []
     for _ in range(case.settings.repeats):
         start = perf_counter_ns()
@@ -110,19 +111,24 @@ def _time_metrics(case: BenchmarkCase) -> dict[str, float]:
         elapsed_s = (perf_counter_ns() - start) / 1_000_000_000
         samples.append(elapsed_s / case.settings.min_iterations)
 
-    mean_s = statistics.fmean(samples)
-    median_s = statistics.median(samples)
-    p95_s = sorted(samples)[int((len(samples) - 1) * 0.95)]
+    sorted_samples = sorted(samples)
+    mean_s = statistics.fmean(sorted_samples)
+    median_s = statistics.median(sorted_samples)
+    p95_s = sorted_samples[int((len(sorted_samples) - 1) * 0.95)]
+    q1_s = sorted_samples[int((len(sorted_samples) - 1) * 0.25)]
+    q3_s = sorted_samples[int((len(sorted_samples) - 1) * 0.75)]
+    iqr_s = q3_s - q1_s
     stddev_s = statistics.pstdev(samples) if len(samples) > 1 else 0.0
     ops_per_sec = (1.0 / mean_s) if mean_s > 0 else 0.0
 
     return {
         "mean_s": mean_s,
         "median_s": median_s,
+        "iqr_s": iqr_s,
         "p95_s": p95_s,
         "stddev_s": stddev_s,
         "ops_per_sec": ops_per_sec,
-    }
+    }, samples
 
 
 def _memory_metrics(case: BenchmarkCase) -> dict[str, float]:
@@ -195,11 +201,11 @@ def run_cases(
             _call_case(case)
 
         with _gc_control_context(case.settings.gc_control):
-            metrics = (
-                _time_metrics(case)
-                if case.metric_type == "time"
-                else _memory_metrics(case)
-            )
+            if case.metric_type == "time":
+                metrics, time_samples_s = _time_metrics(case)
+            else:
+                metrics = _memory_metrics(case)
+                time_samples_s = []
 
         results.append(
             BenchmarkResult(
@@ -214,6 +220,7 @@ def run_cases(
                 repeats=case.settings.repeats,
                 metrics=metrics,
                 warning_threshold_pct=case.warning_threshold_pct,
+                time_samples_s=time_samples_s,
             )
         )
 
@@ -264,7 +271,7 @@ def filter_cases(
 
 def _primary_metric(result: BenchmarkResult) -> tuple[str, float]:
     if result.metric_type == "time":
-        return "mean_s", result.metrics["mean_s"]
+        return "median_s", result.metrics["median_s"]
     return "peak_alloc_bytes", result.metrics["peak_alloc_bytes"]
 
 
@@ -315,6 +322,8 @@ def compare_runs(
 
 def write_json(path: str | Path, run: BenchmarkRun) -> None:
     payload = asdict(run)
+    for benchmark_payload in payload.get("benchmarks", []):
+        benchmark_payload.pop("time_samples_s", None)
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -338,6 +347,7 @@ def read_json(path: str | Path) -> BenchmarkRun:
             warning_threshold_pct=item.get(
                 "warning_threshold_pct", item.get("regression_warning_pct", 50.0)
             ),
+            time_samples_s=item.get("time_samples_s", []),
         )
         for item in payload.get("benchmarks", [])
     ]
@@ -385,8 +395,8 @@ def write_markdown(path: str | Path, run: BenchmarkRun) -> None:
         f"- python_version: `{run.python_version}`",
         f"- platform: `{run.platform}`",
         "",
-        "| case | benchmark | metric_type | mean_s | median_s | p95_s | stddev_s | ops_per_sec | peak_alloc_bytes | net_alloc_bytes |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| case | benchmark | metric_type | mean_s | median_s | iqr_s | p95_s | stddev_s | ops_per_sec | peak_alloc_bytes | net_alloc_bytes |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
 
     for result in run.benchmarks:
@@ -398,6 +408,7 @@ def write_markdown(path: str | Path, run: BenchmarkRun) -> None:
             f"{result.metric_type} | "
             f"{_format_markdown_metric(metrics.get('mean_s'))} | "
             f"{_format_markdown_metric(metrics.get('median_s'))} | "
+            f"{_format_markdown_metric(metrics.get('iqr_s'))} | "
             f"{_format_markdown_metric(metrics.get('p95_s'))} | "
             f"{_format_markdown_metric(metrics.get('stddev_s'))} | "
             f"{_format_markdown_metric(metrics.get('ops_per_sec'))} | "

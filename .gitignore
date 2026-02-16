@@ -13,3 +13,7 @@ wheels/
 examples/artifacts/*.json
 examples/artifacts/*.csv
 examples/artifacts/*.md
+
+# Local machine-specific benchmark artifacts
+.benchbro/*
+!.benchbro/baseline.ci.json

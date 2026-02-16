@@ -3,7 +3,7 @@ BENCHBRO ?= $(PYTHON) -m benchbro
 EXAMPLES_MODULE ?= examples/e2e_benchmarks.py
 EXAMPLES_ARTIFACTS ?= examples/artifacts
 
-.PHONY: ruff ty deptry pytest ci examples examples-baseline examples-test-run pre-commit pre-commit-install
+.PHONY: ruff ty deptry pytest ci examples examples-baseline examples-test-run examples-histogram pre-commit pre-commit-install
 
 ruff:
 	uv run ruff check .
@@ -41,3 +41,6 @@ examples-test-run:
 		--output-json $(EXAMPLES_ARTIFACTS)/current.json \
 		--output-csv $(EXAMPLES_ARTIFACTS)/current.csv \
 		--output-md $(EXAMPLES_ARTIFACTS)/current.md
+
+examples-histogram:
+	$(BENCHBRO) $(EXAMPLES_MODULE) --histogram
