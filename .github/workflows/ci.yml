@@ -70,8 +70,21 @@ jobs:
       - name: Deptry
         run: uv run deptry .
 
-  pytest:
+  tox:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - python-version: "3.10"
+            tox-env: py310
+          - python-version: "3.11"
+            tox-env: py311
+          - python-version: "3.12"
+            tox-env: py312
+          - python-version: "3.13"
+            tox-env: py313
+          - python-version: "3.14"
+            tox-env: py314
 
     steps:
       - name: Checkout
@@ -80,7 +93,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
@@ -88,12 +101,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
-      - name: Pytest
-        run: uv run python -m pytest
+      - name: Tox
+        run: uv run tox -e ${{ matrix.tox-env }}
 
   version_check:
     runs-on: ubuntu-latest
-    needs: [ruff, ty, deptry, pytest]
+    needs: [ruff, ty, deptry, tox]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}

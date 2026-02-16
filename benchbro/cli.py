@@ -6,9 +6,13 @@ import importlib
 import importlib.util
 import math
 import sys
-import tomllib
 from collections import defaultdict
 from pathlib import Path
+
+if sys.version_info >= (3, 11):
+    import tomllib as _toml
+else:  # pragma: no cover - Python <3.11
+    import tomli as _toml
 
 from rich.console import Console
 from rich.table import Table
@@ -259,7 +263,7 @@ def _load_ini_options(repo_root: Path) -> tuple[list[str], tuple[str, ...]]:
     if not pyproject_path.exists():
         return benchmark_paths, file_patterns
 
-    payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    payload = _toml.loads(pyproject_path.read_text(encoding="utf-8"))
     section = payload.get("tool", {}).get("benchbro", {}).get("ini_options", {})
 
     configured_paths = section.get("benchmark_paths")

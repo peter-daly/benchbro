@@ -3,7 +3,7 @@ BENCHBRO ?= $(PYTHON) -m benchbro
 EXAMPLES_MODULE ?= examples/e2e_benchmarks.py
 EXAMPLES_ARTIFACTS ?= examples/artifacts
 
-.PHONY: ruff ty deptry pytest ci examples examples-baseline examples-test-run examples-histogram pre-commit pre-commit-install
+.PHONY: ruff ty deptry pytest tox ci examples examples-baseline examples-test-run examples-histogram pre-commit pre-commit-install
 
 ruff:
 	uv run ruff check .
@@ -16,6 +16,9 @@ deptry:
 
 pytest:
 	uv run python -m pytest
+
+tox:
+	uv run tox
 
 ci: ruff ty deptry pytest
 
