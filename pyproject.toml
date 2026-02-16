@@ -31,4 +31,4 @@ addopts = "-q"
 
 
 [tool.benchbro.ini_options]
-benchmarkpaths = ["examples"]
+benchmark_paths = ["examples"]

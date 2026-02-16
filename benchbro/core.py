@@ -128,11 +128,15 @@ def _time_metrics(case: BenchmarkCase) -> tuple[dict[str, float], list[float]]:
         samples.append(elapsed_s / case.settings.min_iterations)
 
     sorted_samples = sorted(samples)
+    last_index = len(sorted_samples) - 1
     mean_s = statistics.fmean(sorted_samples)
     median_s = statistics.median(sorted_samples)
-    p95_s = sorted_samples[int((len(sorted_samples) - 1) * 0.95)]
-    q1_s = sorted_samples[int((len(sorted_samples) - 1) * 0.25)]
-    q3_s = sorted_samples[int((len(sorted_samples) - 1) * 0.75)]
+    p80_s = sorted_samples[int(last_index * 0.80)]
+    p90_s = sorted_samples[int(last_index * 0.90)]
+    p95_s = sorted_samples[int(last_index * 0.95)]
+    p99_s = sorted_samples[int(last_index * 0.99)]
+    q1_s = sorted_samples[int(last_index * 0.25)]
+    q3_s = sorted_samples[int(last_index * 0.75)]
     iqr_s = q3_s - q1_s
     stddev_s = statistics.pstdev(samples) if len(samples) > 1 else 0.0
     ops_per_sec = (1.0 / mean_s) if mean_s > 0 else 0.0
@@ -140,8 +144,13 @@ def _time_metrics(case: BenchmarkCase) -> tuple[dict[str, float], list[float]]:
     return {
         "mean_s": mean_s,
         "median_s": median_s,
+        "p80_s": p80_s,
+        "p90_s": p90_s,
         "iqr_s": iqr_s,
         "p95_s": p95_s,
+        "q1_s": q1_s,
+        "q3_s": q3_s,
+        "p99_s": p99_s,
         "stddev_s": stddev_s,
         "ops_per_sec": ops_per_sec,
     }, samples
@@ -332,7 +341,9 @@ def compare_runs(
         metric_name: str | None = None
         base_value: float | None = None
         cur_value: float | None = None
-        for candidate in _comparison_metric_candidates(cur.metric_type, preferred_metric):
+        for candidate in _comparison_metric_candidates(
+            cur.metric_type, preferred_metric
+        ):
             if candidate in base.metrics and candidate in cur.metrics:
                 metric_name = candidate
                 base_value = base.metrics[candidate]
@@ -349,11 +360,15 @@ def compare_runs(
         if metric_name == "ops_per_sec":
             # For throughput metrics, lower values are regressions.
             is_regression = (percent_change + threshold_pct) < -1e-12
-            is_warning = (percent_change + warning_threshold_pct) < -1e-12 and not is_regression
+            is_warning = (
+                percent_change + warning_threshold_pct
+            ) < -1e-12 and not is_regression
         else:
             # Keep strict threshold semantics while avoiding float rounding artifacts at equality boundaries.
             is_regression = (percent_change - threshold_pct) > 1e-12
-            is_warning = (percent_change - warning_threshold_pct) > 1e-12 and not is_regression
+            is_warning = (
+                percent_change - warning_threshold_pct
+            ) > 1e-12 and not is_regression
         regressions.append(
             Regression(
                 case_name=cur.case_name,

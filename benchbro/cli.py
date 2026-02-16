@@ -262,7 +262,7 @@ def _load_ini_options(repo_root: Path) -> tuple[list[str], tuple[str, ...]]:
     payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     section = payload.get("tool", {}).get("benchbro", {}).get("ini_options", {})
 
-    configured_paths = section.get("benchmarkpaths")
+    configured_paths = section.get("benchmark_paths")
     if isinstance(configured_paths, str):
         benchmark_paths = [configured_paths]
     elif isinstance(configured_paths, list):
