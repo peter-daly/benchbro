@@ -1,6 +1,0 @@
-case,benchmark,metric_type,metric_name,value
-dir_case,dir_bench,time,mean_s,5.84e-07
-dir_case,dir_bench,time,median_s,5.84e-07
-dir_case,dir_bench,time,p95_s,5.84e-07
-dir_case,dir_bench,time,stddev_s,0.0
-dir_case,dir_bench,time,ops_per_sec,1712328.7671232875

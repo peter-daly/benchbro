@@ -36,6 +36,7 @@ class BenchmarkCase:
     metric_type: MetricType = "time"
     tags: tuple[str, ...] = ()
     input_func: Callable[[], Any] | None = None
+    regression_threshold_pct: float = 100.0
     settings: BenchmarkSettings = field(default_factory=BenchmarkSettings)
 
 
@@ -45,9 +46,12 @@ class BenchmarkResult:
     benchmark_name: str
     case_type: str
     metric_type: MetricType
+    gc_control: GcControl
+    regression_threshold_pct: float
     iterations: int
     repeats: int
     metrics: dict[str, float]
+    environment: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -68,6 +72,7 @@ class Regression:
     baseline_value: float
     current_value: float
     percent_change: float
+    threshold_pct: float
     is_regression: bool
 
 
@@ -158,6 +163,7 @@ def _with_overrides(
         metric_type=original.metric_type,
         tags=original.tags,
         input_func=original.input_func,
+        regression_threshold_pct=original.regression_threshold_pct,
         settings=settings,
     )
 
@@ -187,6 +193,9 @@ def run_cases(
                 benchmark_name=case.benchmark_name,
                 case_type=case.case_type,
                 metric_type=case.metric_type,
+                gc_control=case.settings.gc_control,
+                regression_threshold_pct=case.regression_threshold_pct,
+                environment=environment.copy(),
                 iterations=case.settings.min_iterations,
                 repeats=case.settings.repeats,
                 metrics=metrics,
@@ -245,7 +254,6 @@ def _primary_metric(result: BenchmarkResult) -> tuple[str, float]:
 def compare_runs(
     baseline: BenchmarkRun,
     current: BenchmarkRun,
-    regression_threshold_pct: float = 5.0,
 ) -> list[Regression]:
     baseline_map = {(r.case_name, r.benchmark_name, r.metric_type): r for r in baseline.benchmarks}
     regressions: list[Regression] = []
@@ -261,7 +269,9 @@ def compare_runs(
             continue
 
         percent_change = ((cur_value - base_value) / base_value) * 100.0
-        is_regression = percent_change > regression_threshold_pct
+        threshold_pct = cur.regression_threshold_pct
+        # Keep strict threshold semantics while avoiding float rounding artifacts at equality boundaries.
+        is_regression = (percent_change - threshold_pct) > 1e-12
         regressions.append(
             Regression(
                 case_name=cur.case_name,
@@ -270,6 +280,7 @@ def compare_runs(
                 baseline_value=base_value,
                 current_value=cur_value,
                 percent_change=percent_change,
+                threshold_pct=threshold_pct,
                 is_regression=is_regression,
             )
         )
@@ -286,13 +297,28 @@ def write_json(path: str | Path, run: BenchmarkRun) -> None:
 
 def read_json(path: str | Path) -> BenchmarkRun:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    benchmarks = [BenchmarkResult(**item) for item in payload.get("benchmarks", [])]
+    run_environment = payload.get("environment", {})
+    benchmarks = [
+        BenchmarkResult(
+            case_name=item["case_name"],
+            benchmark_name=item["benchmark_name"],
+            case_type=item["case_type"],
+            metric_type=item["metric_type"],
+            gc_control=item.get("gc_control", "disable_during_measure"),
+            regression_threshold_pct=item.get("regression_threshold_pct", 100.0),
+            environment=item.get("environment", run_environment),
+            iterations=item["iterations"],
+            repeats=item["repeats"],
+            metrics=item["metrics"],
+        )
+        for item in payload.get("benchmarks", [])
+    ]
     return BenchmarkRun(
         started_at=payload["started_at"],
         finished_at=payload["finished_at"],
         python_version=payload["python_version"],
         platform=payload["platform"],
-        environment=payload.get("environment", {}),
+        environment=run_environment,
         benchmarks=benchmarks,
     )
 
@@ -302,7 +328,7 @@ def write_csv(path: str | Path, run: BenchmarkRun) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", newline="", encoding="utf-8") as fp:
         writer = csv.writer(fp)
-        writer.writerow(["case", "benchmark", "metric_type", "metric_name", "value"])
+        writer.writerow(["case", "benchmark", "metric_type", "gc_control", "metric_name", "value"])
         for result in run.benchmarks:
             for metric_name, value in result.metrics.items():
                 writer.writerow(
@@ -310,6 +336,7 @@ def write_csv(path: str | Path, run: BenchmarkRun) -> None:
                         result.case_name,
                         result.benchmark_name,
                         result.metric_type,
+                        result.gc_control,
                         metric_name,
                         value,
                     ]
@@ -364,6 +391,8 @@ def _collect_environment_metadata() -> dict[str, str]:
         "machine": uname.machine,
         "processor": uname.processor,
         "cpu_count": str(os.cpu_count() or 0),
+        "gc_enabled_at_start": str(gc.isenabled()),
+        "gc_threshold": ",".join(str(value) for value in gc.get_threshold()),
     }
 
 

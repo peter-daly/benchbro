@@ -6,7 +6,19 @@ import os
 import sys
 from pathlib import Path
 
-from benchbro import Case, clear_registry, list_cases, run_cases
+import pytest
+
+from benchbro import (
+    BenchmarkResult,
+    BenchmarkRun,
+    Case,
+    clear_registry,
+    compare_runs,
+    list_cases,
+    read_json,
+    run_cases,
+    write_json,
+)
 from benchbro.cli import main
 
 
@@ -32,6 +44,47 @@ def test_case_groups_multiple_benchmarks() -> None:
     assert "platform" in run.environment
     assert {r.case_name for r in run.benchmarks} == {"hashing"}
     assert {r.benchmark_name for r in run.benchmarks} == {"sha1", "sha256"}
+    assert {r.regression_threshold_pct for r in run.benchmarks} == {100.0}
+
+
+def test_case_threshold_used_when_benchmark_override_missing() -> None:
+    clear_registry()
+    case = Case(
+        name="threshold_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+        regression_threshold_pct=12.5,
+    )
+
+    @case.benchmark()
+    def bench_default() -> int:
+        return 1
+
+    run = run_cases(list_cases())
+    assert len(run.benchmarks) == 1
+    assert run.benchmarks[0].regression_threshold_pct == 12.5
+
+
+def test_benchmark_threshold_override_supersedes_case_threshold() -> None:
+    clear_registry()
+    case = Case(
+        name="threshold_override_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+        regression_threshold_pct=20.0,
+    )
+
+    @case.benchmark(regression_threshold_pct=7.5)
+    def bench_override() -> int:
+        return 1
+
+    run = run_cases(list_cases())
+    assert len(run.benchmarks) == 1
+    assert run.benchmarks[0].regression_threshold_pct == 7.5
 
 
 def test_case_memory_result_shape() -> None:
@@ -49,6 +102,247 @@ def test_case_memory_result_shape() -> None:
     assert result.metric_type == "memory"
     assert "peak_alloc_bytes" in result.metrics
     assert "net_alloc_bytes" in result.metrics
+
+
+def test_compare_runs_uses_current_result_threshold() -> None:
+    baseline = BenchmarkRun(
+        started_at="t0",
+        finished_at="t1",
+        python_version="3.13",
+        platform="test",
+        environment={},
+        benchmarks=[
+            BenchmarkResult(
+                case_name="cmp_case",
+                benchmark_name="time_bench",
+                case_type="cpu",
+                metric_type="time",
+                gc_control="disable_during_measure",
+                regression_threshold_pct=100.0,
+                iterations=1,
+                repeats=1,
+                metrics={"mean_s": 1.0},
+            )
+        ],
+    )
+    current = BenchmarkRun(
+        started_at="t2",
+        finished_at="t3",
+        python_version="3.13",
+        platform="test",
+        environment={},
+        benchmarks=[
+            BenchmarkResult(
+                case_name="cmp_case",
+                benchmark_name="time_bench",
+                case_type="cpu",
+                metric_type="time",
+                gc_control="disable_during_measure",
+                regression_threshold_pct=10.0,
+                iterations=1,
+                repeats=1,
+                metrics={"mean_s": 1.2},
+            )
+        ],
+    )
+    regressions = compare_runs(baseline, current)
+    assert len(regressions) == 1
+    assert regressions[0].threshold_pct == 10.0
+    assert regressions[0].is_regression
+
+
+def test_compare_runs_threshold_equality_is_not_regression() -> None:
+    baseline = BenchmarkRun(
+        started_at="t0",
+        finished_at="t1",
+        python_version="3.13",
+        platform="test",
+        environment={},
+        benchmarks=[
+            BenchmarkResult(
+                case_name="eq_case",
+                benchmark_name="eq_bench",
+                case_type="cpu",
+                metric_type="time",
+                gc_control="disable_during_measure",
+                regression_threshold_pct=100.0,
+                iterations=1,
+                repeats=1,
+                metrics={"mean_s": 1.0},
+            )
+        ],
+    )
+    current = BenchmarkRun(
+        started_at="t2",
+        finished_at="t3",
+        python_version="3.13",
+        platform="test",
+        environment={},
+        benchmarks=[
+            BenchmarkResult(
+                case_name="eq_case",
+                benchmark_name="eq_bench",
+                case_type="cpu",
+                metric_type="time",
+                gc_control="disable_during_measure",
+                regression_threshold_pct=10.0,
+                iterations=1,
+                repeats=1,
+                metrics={"mean_s": 1.1},
+            )
+        ],
+    )
+    regressions = compare_runs(baseline, current)
+    assert len(regressions) == 1
+    assert regressions[0].percent_change == pytest.approx(10.0)
+    assert not regressions[0].is_regression
+
+
+def test_compare_runs_memory_uses_peak_alloc_threshold() -> None:
+    baseline = BenchmarkRun(
+        started_at="t0",
+        finished_at="t1",
+        python_version="3.13",
+        platform="test",
+        environment={},
+        benchmarks=[
+            BenchmarkResult(
+                case_name="mem_cmp",
+                benchmark_name="alloc",
+                case_type="memory",
+                metric_type="memory",
+                gc_control="disable_during_measure",
+                regression_threshold_pct=100.0,
+                iterations=1,
+                repeats=1,
+                metrics={"peak_alloc_bytes": 100.0},
+            )
+        ],
+    )
+    current = BenchmarkRun(
+        started_at="t2",
+        finished_at="t3",
+        python_version="3.13",
+        platform="test",
+        environment={},
+        benchmarks=[
+            BenchmarkResult(
+                case_name="mem_cmp",
+                benchmark_name="alloc",
+                case_type="memory",
+                metric_type="memory",
+                gc_control="disable_during_measure",
+                regression_threshold_pct=50.0,
+                iterations=1,
+                repeats=1,
+                metrics={"peak_alloc_bytes": 130.0},
+            )
+        ],
+    )
+    regressions = compare_runs(baseline, current)
+    assert len(regressions) == 1
+    assert regressions[0].metric_name == "peak_alloc_bytes"
+    assert not regressions[0].is_regression
+
+
+def test_read_json_defaults_threshold_for_older_payload(tmp_path: Path) -> None:
+    payload = {
+        "started_at": "t0",
+        "finished_at": "t1",
+        "python_version": "3.13",
+        "platform": "test",
+        "environment": {},
+        "benchmarks": [
+            {
+                "case_name": "old_case",
+                "benchmark_name": "old_bench",
+                "case_type": "cpu",
+                "metric_type": "time",
+                "gc_control": "disable_during_measure",
+                "iterations": 1,
+                "repeats": 1,
+                "metrics": {"mean_s": 1.0},
+            }
+        ],
+    }
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    run = read_json(path)
+    assert run.benchmarks[0].regression_threshold_pct == 100.0
+    assert run.benchmarks[0].environment == {}
+
+
+def test_read_json_backfills_benchmark_environment_from_run_environment(tmp_path: Path) -> None:
+    payload = {
+        "started_at": "t0",
+        "finished_at": "t1",
+        "python_version": "3.13",
+        "platform": "test",
+        "environment": {"python_version": "3.13", "platform": "test-platform"},
+        "benchmarks": [
+            {
+                "case_name": "old_case",
+                "benchmark_name": "old_bench",
+                "case_type": "cpu",
+                "metric_type": "time",
+                "gc_control": "disable_during_measure",
+                "iterations": 1,
+                "repeats": 1,
+                "metrics": {"mean_s": 1.0},
+            }
+        ],
+    }
+    path = tmp_path / "old_with_env.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    run = read_json(path)
+    assert run.benchmarks[0].environment == payload["environment"]
+
+
+def test_write_json_includes_threshold_field(tmp_path: Path) -> None:
+    run = BenchmarkRun(
+        started_at="t0",
+        finished_at="t1",
+        python_version="3.13",
+        platform="test",
+        environment={},
+        benchmarks=[
+            BenchmarkResult(
+                case_name="case",
+                benchmark_name="bench",
+                case_type="cpu",
+                metric_type="time",
+                gc_control="disable_during_measure",
+                regression_threshold_pct=33.0,
+                iterations=1,
+                repeats=1,
+                metrics={"mean_s": 1.0},
+            )
+        ],
+    )
+    path = tmp_path / "new.json"
+    write_json(path, run)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["benchmarks"][0]["regression_threshold_pct"] == 33.0
+    assert "environment" in payload["benchmarks"][0]
+
+
+def test_cli_rejects_removed_fail_on_regression_flag(tmp_path: Path) -> None:
+    clear_registry()
+    module_path = tmp_path / "bench_flag.py"
+    module_path.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='flag_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='flag_bench')\n"
+        "def flag_bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit):
+        main([str(module_path), "--fail-on-regression", "5"])
 
 
 def test_gc_control_disable_during_measure_restores_enabled_state() -> None:
@@ -109,12 +403,13 @@ def test_cli_run_writes_json(tmp_path: Path) -> None:
     )
 
     sys.path.insert(0, str(tmp_path))
+    original_cwd = Path.cwd()
     try:
+        os.chdir(tmp_path)
         output_path = tmp_path / "out.json"
         markdown_path = tmp_path / "out.md"
         code = main(
             [
-                "run",
                 "bench_mod",
                 "--output-json",
                 str(output_path),
@@ -136,12 +431,15 @@ def test_cli_run_writes_json(tmp_path: Path) -> None:
         assert payload["benchmarks"][0]["case_name"] == "mod_group"
         assert payload["benchmarks"][0]["benchmark_name"] == "mod_case"
         assert "metrics" in payload["benchmarks"][0]
+        assert "environment" in payload["benchmarks"][0]
+        assert payload["benchmarks"][0]["environment"]["python_version"] == payload["environment"]["python_version"]
         markdown = markdown_path.read_text(encoding="utf-8")
         assert "# Benchbro Results" in markdown
         assert "| case | benchmark | metric_type |" in markdown
         assert "mod_group" in markdown
         assert "mod_case" in markdown
     finally:
+        os.chdir(original_cwd)
         sys.path.remove(str(tmp_path))
 
 
@@ -159,24 +457,66 @@ def test_cli_run_accepts_python_file_path(tmp_path: Path) -> None:
     )
 
     output_path = tmp_path / "out_file.json"
-    code = main(
-        [
-            "run",
-            str(module_path),
-            "--output-json",
-            str(output_path),
-            "--warmup",
-            "0",
-            "--repeats",
-            "1",
-            "--min-iterations",
-            "1",
-        ]
-    )
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        code = main(
+            [
+                str(module_path),
+                "--output-json",
+                str(output_path),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+    finally:
+        os.chdir(original_cwd)
     assert code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["benchmarks"][0]["case_name"] == "file_case"
     assert payload["benchmarks"][0]["benchmark_name"] == "file_bench"
+
+
+def test_cli_runs_without_subcommands(tmp_path: Path) -> None:
+    clear_registry()
+
+    module_path = tmp_path / "bench_shorthand.py"
+    module_path.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='short_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='short_bench')\n"
+        "def short_bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    output_path = tmp_path / "short.json"
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        code = main(
+            [
+                str(module_path),
+                "--output-json",
+                str(output_path),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+    finally:
+        os.chdir(original_cwd)
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["benchmarks"][0]["case_name"] == "short_case"
+    assert payload["benchmarks"][0]["benchmark_name"] == "short_bench"
 
 
 def test_cli_run_accepts_directory_path(tmp_path: Path) -> None:
@@ -195,20 +535,24 @@ def test_cli_run_accepts_directory_path(tmp_path: Path) -> None:
     (benchmarks_dir / "ignore_me.py").write_text("x = 1\n", encoding="utf-8")
 
     output_path = tmp_path / "out_dir.json"
-    code = main(
-        [
-            "run",
-            str(benchmarks_dir),
-            "--output-json",
-            str(output_path),
-            "--warmup",
-            "0",
-            "--repeats",
-            "1",
-            "--min-iterations",
-            "1",
-        ]
-    )
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        code = main(
+            [
+                str(benchmarks_dir),
+                "--output-json",
+                str(output_path),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+    finally:
+        os.chdir(original_cwd)
     assert code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert len(payload["benchmarks"]) == 1
@@ -236,17 +580,70 @@ def test_cli_run_writes_default_outputs_to_repo_root(tmp_path: Path) -> None:
     original_cwd = Path.cwd()
     try:
         os.chdir(repo_root)
-        code = main(["run", str(benchmark_file), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        code = main(
+            [
+                str(benchmark_file),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert code == 0
 
         default_json = repo_root / ".benchbro" / "current.json"
         default_csv = repo_root / ".benchbro" / "current.csv"
-        assert default_json.exists()
-        assert default_csv.exists()
+        baseline_json = repo_root / ".benchbro" / "baseline.json"
+        assert not default_json.exists()
+        assert not default_csv.exists()
+        assert baseline_json.exists()
+    finally:
+        os.chdir(original_cwd)
 
-        payload = json.loads(default_json.read_text(encoding="utf-8"))
-        assert payload["benchmarks"][0]["case_name"] == "default_output_case"
-        assert payload["benchmarks"][0]["benchmark_name"] == "default_output_bench"
+
+def test_cli_run_creates_repo_baseline_json_when_missing(tmp_path: Path) -> None:
+    clear_registry()
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
+    benchmark_file = repo_root / "sample_benchmarks.py"
+    benchmark_file.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='baseline_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='baseline_bench')\n"
+        "def baseline_bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        code = main(
+            [
+                str(benchmark_file),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+        assert code == 0
+
+        baseline_json = repo_root / ".benchbro" / "baseline.json"
+        assert baseline_json.exists()
+        payload = json.loads(baseline_json.read_text(encoding="utf-8"))
+        assert payload["benchmarks"][0]["case_name"] == "baseline_case"
+        assert payload["benchmarks"][0]["benchmark_name"] == "baseline_bench"
+        assert "environment" in payload
+        assert "gc_enabled_at_start" in payload["environment"]
+        assert "gc_threshold" in payload["environment"]
     finally:
         os.chdir(original_cwd)
 
@@ -286,7 +683,6 @@ def test_cli_run_uses_default_benchmarks_directory(tmp_path: Path) -> None:
         os.chdir(repo_root)
         code = main(
             [
-                "run",
                 "--output-json",
                 str(out_json),
                 "--output-csv",
@@ -310,5 +706,181 @@ def test_cli_run_uses_default_benchmarks_directory(tmp_path: Path) -> None:
             "default_target_bench_extra",
         }
         assert out_csv.exists()
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_cli_run_merges_new_benchmark_into_existing_baseline(tmp_path: Path) -> None:
+    clear_registry()
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
+    first_module = repo_root / "bench_one.py"
+    first_module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='merge_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='one')\n"
+        "def one():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    second_module = repo_root / "bench_two.py"
+    second_module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='merge_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='one')\n"
+        "def one():\n"
+        "    return 1\n"
+        "@case.benchmark(name='two')\n"
+        "def two():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        first_code = main(
+            [
+                str(first_module),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+        assert first_code == 0
+
+        second_code = main(
+            [
+                str(second_module),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+        assert second_code == 0
+
+        baseline_json = repo_root / ".benchbro" / "baseline.json"
+        payload = json.loads(baseline_json.read_text(encoding="utf-8"))
+        names = {(item["case_name"], item["benchmark_name"]) for item in payload["benchmarks"]}
+        assert ("merge_case", "one") in names
+        assert ("merge_case", "two") in names
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_cli_comparison_output_includes_threshold_column(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    clear_registry()
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
+    baseline_module = repo_root / "bench_baseline.py"
+    baseline_module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='cmp_table_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='cmp_bench')\n"
+        "def cmp_bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    current_module = repo_root / "bench_current.py"
+    current_module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='cmp_table_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0, regression_threshold_pct=5.0)\n"
+        "@case.benchmark(name='cmp_bench')\n"
+        "def cmp_bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        first_code = main([str(baseline_module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        assert first_code == 0
+
+        second_code = main([str(current_module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        assert second_code in (0, 2)
+    finally:
+        os.chdir(original_cwd)
+
+    output = capsys.readouterr().out
+    assert "Benchmark Comparison" in output
+    assert "5.00%" in output
+
+
+def test_cli_new_baseline_replaces_existing_baseline(tmp_path: Path) -> None:
+    clear_registry()
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
+    first_module = repo_root / "bench_original.py"
+    first_module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='replace_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='original')\n"
+        "def original():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    second_module = repo_root / "bench_new.py"
+    second_module.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='replace_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='new_only')\n"
+        "def new_only():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        first_code = main(
+            [
+                str(first_module),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+        assert first_code == 0
+
+        second_code = main(
+            [
+                str(second_module),
+                "--new-baseline",
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+        assert second_code == 0
+
+        baseline_json = repo_root / ".benchbro" / "baseline.json"
+        payload = json.loads(baseline_json.read_text(encoding="utf-8"))
+        names = {(item["case_name"], item["benchmark_name"]) for item in payload["benchmarks"]}
+        assert names == {("replace_case", "new_only")}
     finally:
         os.chdir(original_cwd)

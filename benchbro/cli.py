@@ -5,6 +5,7 @@ import fnmatch
 import importlib
 import importlib.util
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 from rich.console import Console
@@ -21,6 +22,7 @@ BENCH_FILE_PATTERNS = (
 )
 
 _CONSOLE = Console()
+BASELINE_JSON_PATH = Path(".benchbro/baseline.json")
 
 
 def _format_metric(value: float | None) -> str:
@@ -30,33 +32,44 @@ def _format_metric(value: float | None) -> str:
 
 
 def _print_results(run) -> None:
-    table = Table(title="Benchbro Results")
-    table.add_column("Case", style="cyan", no_wrap=True)
-    table.add_column("Benchmark", style="bold")
-    table.add_column("Type", style="magenta", no_wrap=True)
-    table.add_column("Mean (s)", justify="right")
-    table.add_column("Median (s)", justify="right")
-    table.add_column("P95 (s)", justify="right")
-    table.add_column("StdDev (s)", justify="right")
-    table.add_column("Ops/s", justify="right")
-    table.add_column("Peak (B)", justify="right")
-    table.add_column("Net (B)", justify="right")
+    env_table = Table(title="Environment")
+    env_table.add_column("Key", style="cyan", no_wrap=True)
+    env_table.add_column("Value", style="bold")
 
+    for key in sorted(run.environment):
+        env_table.add_row(key, run.environment[key])
+    _CONSOLE.print(env_table)
+
+    by_type = defaultdict(list)
     for result in run.benchmarks:
-        metrics = result.metrics
-        table.add_row(
-            result.case_name,
-            result.benchmark_name,
-            result.metric_type,
-            _format_metric(metrics.get("mean_s")),
-            _format_metric(metrics.get("median_s")),
-            _format_metric(metrics.get("p95_s")),
-            _format_metric(metrics.get("stddev_s")),
-            _format_metric(metrics.get("ops_per_sec")),
-            _format_metric(metrics.get("peak_alloc_bytes")),
-            _format_metric(metrics.get("net_alloc_bytes")),
-        )
-    _CONSOLE.print(table)
+        by_type[result.metric_type].append(result)
+
+    for metric_type in sorted(by_type):
+        table = Table(title=f"Benchbro Results: {metric_type}")
+        table.add_column("Case", style="cyan", no_wrap=True)
+        table.add_column("Benchmark", style="bold")
+        table.add_column("Mean (s)", justify="right")
+        table.add_column("Median (s)", justify="right")
+        table.add_column("P95 (s)", justify="right")
+        table.add_column("StdDev (s)", justify="right")
+        table.add_column("Ops/s", justify="right")
+        table.add_column("Peak (B)", justify="right")
+        table.add_column("Net (B)", justify="right")
+
+        for result in by_type[metric_type]:
+            metrics = result.metrics
+            table.add_row(
+                result.case_name,
+                result.benchmark_name,
+                _format_metric(metrics.get("mean_s")),
+                _format_metric(metrics.get("median_s")),
+                _format_metric(metrics.get("p95_s")),
+                _format_metric(metrics.get("stddev_s")),
+                _format_metric(metrics.get("ops_per_sec")),
+                _format_metric(metrics.get("peak_alloc_bytes")),
+                _format_metric(metrics.get("net_alloc_bytes")),
+            )
+        _CONSOLE.print(table)
 
 
 def _print_regressions(regressions) -> int:
@@ -71,6 +84,7 @@ def _print_regressions(regressions) -> int:
     table.add_column("Metric", style="magenta")
     table.add_column("Baseline", justify="right")
     table.add_column("Current", justify="right")
+    table.add_column("Threshold %", justify="right", style="yellow")
     table.add_column("Change %", justify="right")
     table.add_column("Status", justify="center")
 
@@ -83,6 +97,7 @@ def _print_regressions(regressions) -> int:
             item.metric_name,
             f"{item.baseline_value:.6g}",
             f"{item.current_value:.6g}",
+            f"[yellow]{item.threshold_pct:.2f}%[/yellow]",
             f"[{change_style}]{item.percent_change:+.2f}%[/{change_style}]",
             status,
         )
@@ -92,30 +107,20 @@ def _print_regressions(regressions) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="benchbro")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    run_parser = sub.add_parser("run")
-    run_parser.add_argument(
+    parser.add_argument(
         "target",
         nargs="?",
         help="Benchmark target (module, .py file, or directory). Defaults to <repo>/benchmarks.",
     )
-    run_parser.add_argument("--case", action="append", default=[])
-    run_parser.add_argument("--tag", action="append", default=[])
-    run_parser.add_argument("--repeats", type=int)
-    run_parser.add_argument("--warmup", type=int)
-    run_parser.add_argument("--min-iterations", type=int)
-    run_parser.add_argument("--output-json")
-    run_parser.add_argument("--output-csv")
-    run_parser.add_argument("--output-md")
-    run_parser.add_argument("--baseline-json")
-    run_parser.add_argument("--fail-on-regression", type=float, default=5.0)
-
-    compare_parser = sub.add_parser("compare")
-    compare_parser.add_argument("baseline_json")
-    compare_parser.add_argument("current_json")
-    compare_parser.add_argument("--fail-on-regression", type=float, default=5.0)
-
+    parser.add_argument("--case", action="append", default=[])
+    parser.add_argument("--tag", action="append", default=[])
+    parser.add_argument("--repeats", type=int)
+    parser.add_argument("--warmup", type=int)
+    parser.add_argument("--min-iterations", type=int)
+    parser.add_argument("--output-json")
+    parser.add_argument("--output-csv")
+    parser.add_argument("--output-md")
+    parser.add_argument("--new-baseline", action="store_true")
     return parser
 
 
@@ -127,11 +132,11 @@ def _find_repo_root(start: Path) -> Path:
     return current
 
 
-def _default_output_paths() -> tuple[Path, Path]:
+def _baseline_output_path() -> Path:
     repo_root = _find_repo_root(Path.cwd())
     output_dir = repo_root / ".benchbro"
     output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir / "current.json", output_dir / "current.csv"
+    return output_dir / BASELINE_JSON_PATH.name
 
 
 def _matches_bench_pattern(path: Path) -> bool:
@@ -178,67 +183,79 @@ def _import_target(target: str, include_all_python: bool = False) -> None:
         _import_file(file_path, index)
 
 
+def _benchmark_key(result) -> tuple[str, str, str]:
+    return (result.case_name, result.benchmark_name, result.metric_type)
+
+
+def _merge_missing_benchmarks_into_baseline(baseline_run, current_run, baseline_path: Path) -> int:
+    existing = {_benchmark_key(item) for item in baseline_run.benchmarks}
+    missing = [item for item in current_run.benchmarks if _benchmark_key(item) not in existing]
+    if not missing:
+        return 0
+
+    baseline_run.benchmarks.extend(missing)
+    write_json(baseline_path, baseline_run)
+    return len(missing)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "run":
-        registry = get_registry()
-        registry.clear()
-        if args.target is None:
-            default_target = _find_repo_root(Path.cwd()) / "benchmarks"
-            if not default_target.exists():
-                print(
-                    f"No target provided and default path does not exist: {default_target}",
-                    file=sys.stderr,
-                )
-                return 1
-            target = str(default_target)
-        else:
-            target = args.target
-
-        _import_target(target, include_all_python=args.target is None)
-
-        cases = registry.all_cases()
-        selected = filter_cases(cases, names=args.case or None, tags=args.tag or None)
-        run = run_cases(
-            selected,
-            repeats=args.repeats,
-            warmup=args.warmup,
-            min_iterations=args.min_iterations,
-        )
-        _print_results(run)
-
-        default_json, default_csv = _default_output_paths()
-        output_json = Path(args.output_json) if args.output_json else default_json
-        output_csv = Path(args.output_csv) if args.output_csv else default_csv
-
-        write_json(output_json, run)
-        write_csv(output_csv, run)
-        if args.output_md:
-            write_markdown(args.output_md, run)
-
-        if args.baseline_json:
-            baseline = read_json(args.baseline_json)
-            regressions = compare_runs(
-                baseline,
-                run,
-                regression_threshold_pct=args.fail_on_regression,
+    registry = get_registry()
+    registry.clear()
+    if args.target is None:
+        default_target = _find_repo_root(Path.cwd()) / "benchmarks"
+        if not default_target.exists():
+            print(
+                f"No target provided and default path does not exist: {default_target}",
+                file=sys.stderr,
             )
-            return _print_regressions(regressions)
+            return 1
+        target = str(default_target)
+    else:
+        target = args.target
+
+    _import_target(target, include_all_python=args.target is None)
+
+    cases = registry.all_cases()
+    selected = filter_cases(cases, names=args.case or None, tags=args.tag or None)
+    run = run_cases(
+        selected,
+        repeats=args.repeats,
+        warmup=args.warmup,
+        min_iterations=args.min_iterations,
+    )
+    _print_results(run)
+
+    if args.output_json:
+        write_json(args.output_json, run)
+    if args.output_csv:
+        write_csv(args.output_csv, run)
+    if args.output_md:
+        write_markdown(args.output_md, run)
+
+    baseline_path = _baseline_output_path()
+    if args.new_baseline:
+        write_json(baseline_path, run)
+        _CONSOLE.print(f"[green]Saved new baseline:[/green] {baseline_path}")
         return 0
 
-    if args.command == "compare":
-        baseline = read_json(args.baseline_json)
-        current = read_json(args.current_json)
-        regressions = compare_runs(
-            baseline,
-            current,
-            regression_threshold_pct=args.fail_on_regression,
-        )
-        return _print_regressions(regressions)
+    if not baseline_path.exists():
+        write_json(baseline_path, run)
+        _CONSOLE.print(f"[green]Saved baseline:[/green] {baseline_path}")
+        return 0
 
-    return 1
+    baseline = read_json(baseline_path)
+    regressions = compare_runs(baseline, run)
+
+    merged_count = _merge_missing_benchmarks_into_baseline(baseline, run, baseline_path)
+    if merged_count:
+        _CONSOLE.print(
+            f"[cyan]Merged {merged_count} new benchmark(s) into baseline:[/cyan] {baseline_path}"
+        )
+
+    return _print_regressions(regressions)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ class Case:
     min_iterations: int = 50
     repeats: int = 5
     gc_control: GcControl = "disable_during_measure"
+    regression_threshold_pct: float = 100.0
     _input_func: Callable[[], Any] | None = field(default=None, init=False, repr=False)
 
     def input(self) -> Callable[[Callable[[], Any]], Callable[[], Any]]:
@@ -27,9 +28,18 @@ class Case:
 
         return decorator
 
-    def benchmark(self, name: str | None = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def benchmark(
+        self,
+        name: str | None = None,
+        regression_threshold_pct: float | None = None,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             benchmark_name = name or getattr(func, "__name__", "benchmark")
+            effective_threshold = (
+                self.regression_threshold_pct
+                if regression_threshold_pct is None
+                else regression_threshold_pct
+            )
             _registry.register(
                 BenchmarkCase(
                     case_name=self.name,
@@ -39,6 +49,7 @@ class Case:
                     metric_type=self.metric_type,
                     tags=tuple(self.tags),
                     input_func=self._input_func,
+                    regression_threshold_pct=effective_threshold,
                     settings=BenchmarkSettings(
                         warmup_iterations=self.warmup_iterations,
                         min_iterations=self.min_iterations,
