@@ -1131,17 +1131,73 @@ def test_cli_run_uses_default_benchmarks_directory(tmp_path: Path) -> None:
         )
         assert code == 0
         payload = json.loads(out_json.read_text(encoding="utf-8"))
-        assert {item["case_name"] for item in payload["benchmarks"]} == {
-            "default_target_case",
-            "default_target_case_extra",
-        }
-        assert {item["benchmark_name"] for item in payload["benchmarks"]} == {
-            "default_target_bench",
-            "default_target_bench_extra",
-        }
+        assert {item["case_name"] for item in payload["benchmarks"]} == {"default_target_case"}
+        assert {item["benchmark_name"] for item in payload["benchmarks"]} == {"default_target_bench"}
         assert out_csv.exists()
     finally:
         os.chdir(original_cwd)
+
+
+def test_cli_uses_pyproject_ini_options_for_paths_and_pattern(tmp_path: Path) -> None:
+    clear_registry()
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+    (repo_root / "pyproject.toml").write_text(
+        "[project]\n"
+        "name = 'benchbro'\n"
+        "version = '0.0.0'\n"
+        "requires-python = '>=3.13'\n"
+        "\n"
+        "[tool.benchbro.ini_options]\n"
+        "benchmark_paths = ['custom_benchmarks']\n"
+        "file_pattern = 'custom_*.py'\n",
+        encoding="utf-8",
+    )
+
+    benchmarks_dir = repo_root / "custom_benchmarks"
+    benchmarks_dir.mkdir()
+    (benchmarks_dir / "custom_hash.py").write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='configured_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='configured_bench')\n"
+        "def configured_bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    (benchmarks_dir / "ignored_benchmarks.py").write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='ignored_case', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='ignored_bench')\n"
+        "def ignored_bench():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    out_json = repo_root / "configured.json"
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        code = main(
+            [
+                "--output-json",
+                str(out_json),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+        assert code == 0
+    finally:
+        os.chdir(original_cwd)
+
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert {item["case_name"] for item in payload["benchmarks"]} == {"configured_case"}
+    assert {item["benchmark_name"] for item in payload["benchmarks"]} == {"configured_bench"}
 
 
 def test_cli_run_merges_new_benchmark_into_existing_baseline(tmp_path: Path) -> None:

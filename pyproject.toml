@@ -23,8 +23,12 @@ dev = [
 ]
 
 [project.scripts]
-benchbro = "benchbro.cli:main"
+benchbro = "python -m benchbro"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+
+[tool.benchbro.ini_options]
+benchmarkpaths = ["examples"]

@@ -78,6 +78,17 @@ uv run benchbro --repeats 10 --warmup 2
 When no target is provided, `benchbro` discovers benchmarks from:
 - `benchmarks/**/*.py` (relative to repo root)
 
+You can configure discovery in `pyproject.toml`:
+
+```toml
+[tool.benchbro.ini_options]
+benchmark_paths = ["benchmarks"]
+file_pattern = ["bench_*.py", "*_bench.py", "*benchmark.py", "*benchmarks.py"]
+```
+
+- `benchmark_paths`: directories to scan when no CLI target is provided
+- `file_pattern`: glob pattern(s) for benchmark file names in directory discovery
+
 `benchbro` compares against the baseline by default (`.benchbro/baseline.local.json`).
 If the baseline is missing, benchbro creates it automatically.
 If new cases/benchmarks are introduced later, missing entries are merged into baseline.

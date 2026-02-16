@@ -6,6 +6,7 @@ import importlib
 import importlib.util
 import math
 import sys
+import tomllib
 from collections import defaultdict
 from pathlib import Path
 
@@ -170,9 +171,13 @@ def _build_histogram(
 
 
 def _print_histograms(run) -> None:
-    time_results = [r for r in run.benchmarks if r.metric_type == "time" and r.time_samples_s]
+    time_results = [
+        r for r in run.benchmarks if r.metric_type == "time" and r.time_samples_s
+    ]
     if not time_results:
-        _CONSOLE.print("[yellow]No time samples available for histogram output.[/yellow]")
+        _CONSOLE.print(
+            "[yellow]No time samples available for histogram output.[/yellow]"
+        )
         return
 
     for result in time_results:
@@ -228,7 +233,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _find_repo_root(start: Path) -> Path:
     current = start.resolve()
     for candidate in (current, *current.parents):
-        if (candidate / ".git").exists():
+        if (candidate / ".git").exists() or (candidate / "pyproject.toml").exists():
             return candidate
     return current
 
@@ -242,13 +247,48 @@ def _baseline_output_path(use_ci: bool = False) -> Path:
     return output_dir / LOCAL_BASELINE_JSON_PATH.name
 
 
-def _matches_bench_pattern(path: Path) -> bool:
+def _matches_bench_pattern(path: Path, file_patterns: tuple[str, ...]) -> bool:
     name = path.name
-    return any(fnmatch.fnmatch(name, pattern) for pattern in BENCH_FILE_PATTERNS)
+    return any(fnmatch.fnmatch(name, pattern) for pattern in file_patterns)
+
+
+def _load_ini_options(repo_root: Path) -> tuple[list[str], tuple[str, ...]]:
+    benchmark_paths = ["benchmarks"]
+    file_patterns: tuple[str, ...] = BENCH_FILE_PATTERNS
+    pyproject_path = repo_root / "pyproject.toml"
+    if not pyproject_path.exists():
+        return benchmark_paths, file_patterns
+
+    payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    section = payload.get("tool", {}).get("benchbro", {}).get("ini_options", {})
+
+    configured_paths = section.get("benchmarkpaths")
+    if isinstance(configured_paths, str):
+        benchmark_paths = [configured_paths]
+    elif isinstance(configured_paths, list):
+        filtered = [
+            item for item in configured_paths if isinstance(item, str) and item.strip()
+        ]
+        if filtered:
+            benchmark_paths = filtered
+
+    configured_patterns = section.get("file_pattern")
+    if isinstance(configured_patterns, str):
+        file_patterns = (configured_patterns,)
+    elif isinstance(configured_patterns, list):
+        filtered_patterns = tuple(
+            item
+            for item in configured_patterns
+            if isinstance(item, str) and item.strip()
+        )
+        if filtered_patterns:
+            file_patterns = filtered_patterns
+
+    return benchmark_paths, file_patterns
 
 
 def _discover_python_files(
-    target_path: Path, include_all_python: bool = False
+    target_path: Path, file_patterns: tuple[str, ...], include_all_python: bool = False
 ) -> list[Path]:
     if target_path.is_file():
         if target_path.suffix != ".py":
@@ -262,7 +302,7 @@ def _discover_python_files(
         item.resolve()
         for item in sorted(target_path.rglob("*.py"))
         if item.name != "__init__.py"
-        and (include_all_python or _matches_bench_pattern(item))
+        and (include_all_python or _matches_bench_pattern(item, file_patterns))
     ]
 
 
@@ -276,14 +316,20 @@ def _import_file(path: Path, index: int) -> None:
     spec.loader.exec_module(module)
 
 
-def _import_target(target: str, include_all_python: bool = False) -> None:
+def _import_target(
+    target: str, file_patterns: tuple[str, ...], include_all_python: bool = False
+) -> None:
     target_path = Path(target)
     if not target_path.exists():
         importlib.import_module(target)
         return
 
     for index, file_path in enumerate(
-        _discover_python_files(target_path, include_all_python=include_all_python)
+        _discover_python_files(
+            target_path,
+            file_patterns=file_patterns,
+            include_all_python=include_all_python,
+        )
     ):
         _import_file(file_path, index)
 
@@ -310,22 +356,31 @@ def _merge_missing_benchmarks_into_baseline(
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    repo_root = _find_repo_root(Path.cwd())
 
     registry = get_registry()
     registry.clear()
     if args.target is None:
-        default_target = _find_repo_root(Path.cwd()) / "benchmarks"
-        if not default_target.exists():
+        benchmark_paths, file_patterns = _load_ini_options(repo_root)
+        targets = [(repo_root / path) for path in benchmark_paths]
+        existing_targets = [path for path in targets if path.exists()]
+        if not existing_targets:
             print(
-                f"No target provided and default path does not exist: {default_target}",
+                "No target provided and configured benchmark paths do not exist: "
+                + ", ".join(str(path) for path in targets),
                 file=sys.stderr,
             )
             return 1
-        target = str(default_target)
+        for target in existing_targets:
+            _import_target(
+                str(target), file_patterns=file_patterns, include_all_python=False
+            )
     else:
-        target = args.target
-
-    _import_target(target, include_all_python=args.target is None)
+        _import_target(
+            args.target,
+            file_patterns=BENCH_FILE_PATTERNS,
+            include_all_python=False,
+        )
 
     cases = registry.all_cases()
     selected = filter_cases(cases, names=args.case or None, tags=args.tag or None)
