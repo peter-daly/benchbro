@@ -214,6 +214,32 @@ def test_case_memory_result_shape() -> None:
     assert result.time_samples_s == []
 
 
+def test_async_case_input_and_benchmark_support() -> None:
+    clear_registry()
+    case = Case(
+        name="async_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.input()
+    async def input_data() -> bytes:
+        return b"abc"
+
+    @case.benchmark()
+    async def async_bench(input_data: bytes) -> int:
+        return len(input_data)
+
+    run = run_cases(list_cases())
+    assert len(run.benchmarks) == 1
+    result = run.benchmarks[0]
+    assert result.case_name == "async_case"
+    assert result.benchmark_name == "async_bench"
+    assert "median_s" in result.metrics
+
+
 def test_compare_runs_uses_current_result_threshold() -> None:
     baseline = BenchmarkRun(
         started_at="t0",
@@ -650,6 +676,47 @@ def test_cli_run_writes_json(tmp_path: Path) -> None:
     finally:
         os.chdir(original_cwd)
         sys.path.remove(str(tmp_path))
+
+
+def test_cli_run_supports_async_benchmark_module(tmp_path: Path) -> None:
+    clear_registry()
+
+    module_path = tmp_path / "bench_async_mod.py"
+    module_path.write_text(
+        "from benchbro import Case\n"
+        "case = Case(name='async_mod_group', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.input()\n"
+        "async def payload():\n"
+        "    return b'xyz'\n"
+        "@case.benchmark(name='async_mod_case')\n"
+        "async def async_mod_case(payload: bytes):\n"
+        "    return len(payload)\n",
+        encoding="utf-8",
+    )
+
+    output_path = tmp_path / "async_out.json"
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        code = main(
+            [
+                str(module_path),
+                "--output-json",
+                str(output_path),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+    finally:
+        os.chdir(original_cwd)
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["benchmarks"][0]["case_name"] == "async_mod_group"
+    assert payload["benchmarks"][0]["benchmark_name"] == "async_mod_case"
 
 
 def test_cli_run_accepts_python_file_path(tmp_path: Path) -> None:

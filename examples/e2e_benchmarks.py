@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 
@@ -74,3 +75,29 @@ def list_allocation(allocation_size: int) -> list[int]:
 @allocations.benchmark()
 def dict_allocation(allocation_size: int) -> dict[int, int]:
     return {i: i for i in range(allocation_size)}
+
+
+async_io = Case(
+    name="async_io",
+    case_type="cpu",
+    metric_type="time",
+    tags=["demo", "async"],
+    warmup_iterations=1,
+    min_iterations=100,
+    repeats=20,
+)
+
+
+@async_io.input()
+async def async_payload() -> bytes:
+    await asyncio.sleep(0)
+    return b"benchbro-async-example"
+
+
+@async_io.benchmark()
+async def async_sha256_digest(async_payload: bytes) -> str:
+    digest = ""
+    for _ in range(SLOW_FACTOR):
+        await asyncio.sleep(0)
+        digest = hashlib.sha256(async_payload).hexdigest()
+    return digest

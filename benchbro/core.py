@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import gc
 import csv
+import inspect
 import json
 import os
 import platform
@@ -111,11 +113,29 @@ class BenchmarkRegistry:
         self._cases.clear()
 
 
+def _run_awaitable(value: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(value)
+    raise RuntimeError(
+        "benchbro cannot execute async benchmarks from within an active event loop"
+    )
+
+
+def _resolve_maybe_awaitable(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return _run_awaitable(value)
+    return value
+
+
 def _call_case(case: BenchmarkCase) -> Any:
     if case.input_func is None:
-        return case.func()
-    value = case.input_func()
-    return case.func(value)
+        result = case.func()
+        return _resolve_maybe_awaitable(result)
+    input_value = _resolve_maybe_awaitable(case.input_func())
+    result = case.func(input_value)
+    return _resolve_maybe_awaitable(result)
 
 
 def _time_metrics(case: BenchmarkCase) -> tuple[dict[str, float], list[float]]:
