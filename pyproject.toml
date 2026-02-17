@@ -1,10 +1,22 @@
 [project]
 name = "benchbro"
-version = "0.3.0"
+version = "0.3.1"
 description = "Benchmark library and CLI"
 readme = "README.md"
 requires-python = ">=3.10"
-keywords = ["benchmarking"]
+keywords = [
+    "benchmarking",
+    "benchmark",
+    "performance",
+    "profiling",
+    "microbenchmark",
+    "latency",
+    "throughput",
+    "regression-testing",
+    "performance-testing",
+    "python",
+    "cli",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
 ]
