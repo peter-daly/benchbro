@@ -107,6 +107,14 @@ Recommended:
 - ignore `.benchbro/` for machine-local benchmarking artifacts.
 - commit `.benchbro/baseline.ci.json` for CI comparisons.
 
+### Recommended `.gitignore`
+
+```gitignore
+# Benchbro local artifacts
+.benchbro/*
+!.benchbro/baseline.ci.json
+```
+
 If requested, markdown output can also be written with `--output-md`.
 
 JSON artifacts include environment metadata for reproducibility (Python/runtime/platform/CPU fields) both at run level and on each benchmark entry.
