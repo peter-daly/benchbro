@@ -15,7 +15,12 @@ uv sync --group dev
 Create benchmark cases in any importable module:
 
 ```python
-from benchbro import Case
+from benchbro import Case, system
+
+
+@system(scope="module")
+def salt() -> bytes:
+    return b"-fixture"
 
 case = Case(name="hashing", case_type="cpu", metric_type="time", tags=["fast", "core"])
 
@@ -26,18 +31,45 @@ def payload() -> bytes:
 
 
 @case.benchmark()
-def sha1(payload: bytes) -> str:
+def sha1(payload: bytes, salt: bytes) -> str:
     import hashlib
 
-    return hashlib.sha1(payload).hexdigest()
+    return hashlib.sha1(payload + salt).hexdigest()
 
 
 @case.benchmark()
-def sha256(payload: bytes) -> str:
+def sha256(payload: bytes, salt: bytes) -> str:
     import hashlib
 
-    return hashlib.sha256(payload).hexdigest()
+    return hashlib.sha256(payload + salt).hexdigest()
 ```
+
+Standalone systems behave like lightweight fixtures:
+- declare them with `@system()` outside any `Case`
+- inject them into benchmarks and other systems by parameter name
+- choose `scope="function"` (default) or `scope="module"`
+- systems may be sync, async, yield-based, or async-yield-based
+- keep them separate from inputs: inputs cannot depend on systems, and systems cannot depend on inputs
+
+Subprocess benchmarks use a dedicated subprocess API:
+
+```python
+import sys
+
+from benchbro import Case, CommandSpec
+
+case = Case(name="cli", metric_type="time")
+
+
+@case.subprocess()
+def python_cli() -> CommandSpec:
+    return CommandSpec(argv=[sys.executable, "-c", "pass"])
+```
+
+- `@case.subprocess()` benchmarks are time-only in v1.
+- Commands are explicit argv, not shell strings.
+- Unexpected exit codes and timeouts fail the run.
+- Long-lived subprocesses should be started in `@system(...)` and consumed by benchmarks or subprocess benchmarks.
 
 Regression thresholds default to `50.0` percent warning and `100.0` percent error at the case level, and can be overridden per benchmark:
 

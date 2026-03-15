@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -12,14 +13,20 @@ from benchbro import (
     BenchmarkResult,
     BenchmarkRun,
     Case,
+    CommandSpec,
     clear_registry,
     compare_runs,
     list_cases,
     read_json,
     run_cases,
+    system,
     write_json,
 )
 from benchbro.cli import main
+
+
+def _python_command(script: str, *args: str, **kwargs) -> CommandSpec:
+    return CommandSpec(argv=[sys.executable, "-c", script, *args], **kwargs)
 
 
 def test_case_groups_multiple_benchmarks() -> None:
@@ -184,6 +191,7 @@ def test_invalid_comparison_metric_raises_value_error() -> None:
     case = Case(name="invalid_metric_case", metric_type="time")
 
     with pytest.raises(ValueError):
+
         @case.benchmark(comparison_metric="peak_alloc_bytes")
         def invalid_metric_bench() -> int:
             return 1
@@ -238,6 +246,837 @@ def test_async_case_input_and_benchmark_support() -> None:
     assert result.case_name == "async_case"
     assert result.benchmark_name == "async_bench"
     assert "median_s" in result.metrics
+
+
+def test_command_benchmark_runs_python_subprocess_and_records_time_metrics() -> None:
+    clear_registry()
+    case = Case(
+        name="command_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.subprocess()
+    def run_cli() -> CommandSpec:
+        return _python_command("pass")
+
+    run = run_cases(list_cases())
+    assert len(run.benchmarks) == 1
+    result = run.benchmarks[0]
+    assert result.benchmark_name == "run_cli"
+    assert result.metric_type == "time"
+    assert len(result.time_samples_s) == 1
+
+
+def test_command_benchmark_receives_input_and_system_by_name() -> None:
+    clear_registry()
+    case = Case(
+        name="command_di_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @system()
+    def suffix() -> str:
+        return "world"
+
+    @case.input()
+    def greeting() -> str:
+        return "hello"
+
+    @case.subprocess()
+    def run_cli(greeting: str, suffix: str) -> CommandSpec:
+        return _python_command(
+            (
+                "import os, sys; "
+                "expected = sys.argv[1] + '-' + sys.argv[2]; "
+                "sys.exit(0 if os.environ['MSG'] == expected else 1)"
+            ),
+            greeting,
+            suffix,
+            env={"MSG": f"{greeting}-{suffix}"},
+        )
+
+    run_cases(list_cases())
+
+
+def test_command_benchmark_rejects_memory_metric_type() -> None:
+    clear_registry()
+    case = Case(name="command_memory_case", metric_type="memory")
+
+    with pytest.raises(ValueError, match="only support metric_type 'time'"):
+
+        @case.subprocess()
+        def run_cli() -> CommandSpec:
+            return _python_command("pass")
+
+
+def test_async_command_benchmark_rejected() -> None:
+    clear_registry()
+    case = Case(name="async_command_case", metric_type="time")
+
+    with pytest.raises(ValueError, match="cannot be async"):
+
+        @case.subprocess()
+        async def run_cli() -> CommandSpec:
+            return _python_command("pass")
+
+
+def test_command_benchmark_requires_commandspec() -> None:
+    clear_registry()
+    case = Case(
+        name="bad_command_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.subprocess()
+    def run_cli() -> CommandSpec:
+        return "not-a-command"  # type: ignore[return-value]
+
+    with pytest.raises(ValueError, match="must return CommandSpec"):
+        run_cases(list_cases())
+
+
+def test_commandspec_validates_fields() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        CommandSpec(argv=[])
+    with pytest.raises(ValueError, match="positive number"):
+        CommandSpec(argv=["echo"], timeout_s=0)
+    with pytest.raises(ValueError, match="cannot be empty"):
+        CommandSpec(argv=["echo"], expected_exit_codes=())
+    with pytest.raises(ValueError, match="stdout must be"):
+        CommandSpec(argv=["echo"], stdout="capture")  # type: ignore[arg-type]
+
+
+def test_command_benchmark_applies_cwd(tmp_path: Path) -> None:
+    clear_registry()
+    marker = tmp_path / "marker.txt"
+    marker.write_text("ok", encoding="utf-8")
+    case = Case(
+        name="cwd_command_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.subprocess()
+    def run_cli() -> CommandSpec:
+        return _python_command(
+            (
+                "from pathlib import Path; import sys; "
+                "sys.exit(0 if Path('marker.txt').exists() else 1)"
+            ),
+            cwd=tmp_path,
+        )
+
+    run_cases(list_cases())
+
+
+def test_command_benchmark_passes_stdin_bytes() -> None:
+    clear_registry()
+    case = Case(
+        name="stdin_command_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.subprocess()
+    def run_cli() -> CommandSpec:
+        return _python_command(
+            (
+                "import sys; "
+                "data = sys.stdin.buffer.read(); "
+                "sys.exit(0 if data == b'payload' else 1)"
+            ),
+            stdin_bytes=b"payload",
+        )
+
+    run_cases(list_cases())
+
+
+def test_command_benchmark_defaults_stdout_and_stderr_to_devnull(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    clear_registry()
+    case = Case(
+        name="devnull_command_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.subprocess()
+    def run_cli() -> CommandSpec:
+        return _python_command(
+            (
+                "import sys; "
+                "print('stdout-visible', flush=True); "
+                "print('stderr-visible', file=sys.stderr, flush=True)"
+            )
+        )
+
+    run_cases(list_cases())
+    captured = capfd.readouterr()
+    assert "stdout-visible" not in captured.out
+    assert "stderr-visible" not in captured.err
+
+
+def test_command_benchmark_inherit_stdio_does_not_crash(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    clear_registry()
+    case = Case(
+        name="inherit_command_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.subprocess()
+    def run_cli() -> CommandSpec:
+        return _python_command(
+            (
+                "import sys; "
+                "print('stdout-visible', flush=True); "
+                "print('stderr-visible', file=sys.stderr, flush=True)"
+            ),
+            stdout="inherit",
+            stderr="inherit",
+        )
+
+    run_cases(list_cases())
+    captured = capfd.readouterr()
+    assert "stdout-visible" in captured.out
+    assert "stderr-visible" in captured.err
+
+
+def test_command_benchmark_unexpected_exit_code_fails() -> None:
+    clear_registry()
+    case = Case(
+        name="exit_code_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.subprocess()
+    def run_cli() -> CommandSpec:
+        return _python_command("import sys; sys.exit(3)")
+
+    with pytest.raises(RuntimeError, match="exited with code 3"):
+        run_cases(list_cases())
+
+
+def test_command_benchmark_allows_expected_non_zero_exit_code() -> None:
+    clear_registry()
+    case = Case(
+        name="expected_exit_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.subprocess()
+    def run_cli() -> CommandSpec:
+        return _python_command("import sys; sys.exit(3)", expected_exit_codes=(3,))
+
+    run_cases(list_cases())
+
+
+def test_command_benchmark_timeout_fails() -> None:
+    clear_registry()
+    case = Case(
+        name="timeout_command_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.subprocess()
+    def run_cli() -> CommandSpec:
+        return _python_command("import time; time.sleep(1)", timeout_s=0.05)
+
+    with pytest.raises(RuntimeError, match="timed out"):
+        run_cases(list_cases())
+
+
+def test_function_scoped_system_reused_for_command_benchmark() -> None:
+    clear_registry()
+    case = Case(
+        name="command_function_scope_case",
+        metric_type="time",
+        repeats=2,
+        min_iterations=2,
+        warmup_iterations=1,
+    )
+    creates = 0
+    teardowns = 0
+    seen: list[str] = []
+
+    @system(scope="function")
+    def token():
+        nonlocal creates, teardowns
+        creates += 1
+        yield str(creates)
+        teardowns += 1
+
+    @case.subprocess()
+    def run_cli(token: str) -> CommandSpec:
+        seen.append(token)
+        return _python_command("pass")
+
+    run_cases(list_cases())
+    assert creates == 1
+    assert teardowns == 1
+    assert seen == ["1", "1", "1", "1", "1"]
+
+
+def test_module_scoped_system_shared_across_command_benchmarks() -> None:
+    clear_registry()
+    first_case = Case(
+        name="command_module_scope_first",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    second_case = Case(
+        name="command_module_scope_second",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    creates = 0
+    teardowns = 0
+    seen: list[str] = []
+
+    @system(scope="module")
+    def shared():
+        nonlocal creates, teardowns
+        creates += 1
+        yield str(creates)
+        teardowns += 1
+
+    @first_case.subprocess()
+    def first(shared: str) -> CommandSpec:
+        seen.append(shared)
+        return _python_command("pass")
+
+    @second_case.subprocess()
+    def second(shared: str) -> CommandSpec:
+        seen.append(shared)
+        return _python_command("pass")
+
+    run_cases(list_cases())
+    assert creates == 1
+    assert teardowns == 1
+    assert seen == ["1", "1"]
+
+
+def test_persistent_subprocess_system_tears_down_after_use() -> None:
+    clear_registry()
+    case = Case(
+        name="persistent_process_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    process_holder: dict[str, subprocess.Popen[bytes]] = {}
+
+    @system()
+    def worker():
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        process_holder["proc"] = proc
+        yield proc.pid
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+    @case.benchmark()
+    def bench(worker: int) -> int:
+        os.kill(worker, 0)
+        return 1
+
+    run_cases(list_cases())
+    assert process_holder["proc"].poll() is not None
+
+
+def test_standalone_system_injected_by_name() -> None:
+    clear_registry()
+    case = Case(
+        name="system_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    seen: list[int] = []
+
+    @system()
+    def multiplier() -> int:
+        return 2
+
+    @case.input()
+    def input_data() -> int:
+        return 3
+
+    @case.benchmark()
+    def bench(input_data: int, multiplier: int) -> int:
+        seen.append(input_data * multiplier)
+        return seen[-1]
+
+    run_cases(list_cases())
+    assert seen == [6]
+
+
+def test_standalone_system_can_depend_on_another_system() -> None:
+    clear_registry()
+    case = Case(
+        name="system_deps_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    events: list[str] = []
+
+    @system()
+    def base() -> int:
+        events.append("base")
+        return 2
+
+    @system()
+    def derived(base: int) -> int:
+        events.append("derived")
+        return base + 1
+
+    @case.benchmark()
+    def bench(derived: int) -> int:
+        events.append(f"bench:{derived}")
+        return derived
+
+    run_cases(list_cases())
+    assert events == ["base", "derived", "bench:3"]
+
+
+def test_duplicate_standalone_system_names_raise_value_error() -> None:
+    clear_registry()
+
+    def first_duplicate() -> int:
+        return 1
+
+    first_duplicate.__name__ = "duplicate"
+    system()(first_duplicate)
+
+    with pytest.raises(ValueError):
+
+        def second_duplicate() -> int:
+            return 2
+
+        second_duplicate.__name__ = "duplicate"
+        system()(second_duplicate)
+
+
+def test_clear_registry_clears_standalone_systems() -> None:
+    clear_registry()
+
+    def first_duplicate() -> int:
+        return 1
+
+    first_duplicate.__name__ = "duplicate"
+    system()(first_duplicate)
+
+    clear_registry()
+
+    def second_duplicate() -> int:
+        return 2
+
+    second_duplicate.__name__ = "duplicate"
+    system()(second_duplicate)
+
+
+def test_async_system_and_async_benchmark_support() -> None:
+    clear_registry()
+    case = Case(
+        name="async_system_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    seen: list[int] = []
+
+    @system()
+    async def count() -> int:
+        return 4
+
+    @case.benchmark()
+    async def bench(count: int) -> int:
+        seen.append(count)
+        return count
+
+    run_cases(list_cases())
+    assert seen == [4]
+
+
+def test_sync_system_cannot_depend_on_async_system() -> None:
+    clear_registry()
+    case = Case(
+        name="sync_depends_on_async_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @system()
+    async def async_value() -> int:
+        return 4
+
+    @system()
+    def sync_value(async_value: int) -> int:
+        return async_value
+
+    @case.benchmark()
+    def bench(sync_value: int) -> int:
+        return sync_value
+
+    with pytest.raises(
+        ValueError, match="Sync system 'sync_value' cannot depend on async system"
+    ):
+        run_cases(list_cases())
+
+
+def test_sync_benchmark_cannot_depend_on_async_system() -> None:
+    clear_registry()
+    case = Case(
+        name="sync_benchmark_depends_on_async_system_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @system()
+    async def async_value() -> int:
+        return 4
+
+    @case.benchmark()
+    def bench(async_value: int) -> int:
+        return async_value
+
+    with pytest.raises(
+        ValueError, match="Sync benchmark 'bench' cannot depend on async system"
+    ):
+        run_cases(list_cases())
+
+
+def test_input_cannot_declare_dependencies() -> None:
+    clear_registry()
+    case = Case(name="invalid_input")
+
+    with pytest.raises(ValueError):
+
+        @case.input()
+        def payload(dep: int) -> int:
+            return dep
+
+
+def test_benchmark_unknown_dependency_raises_value_error() -> None:
+    clear_registry()
+    case = Case(
+        name="unknown_dep_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.benchmark()
+    def bench(missing: int) -> int:
+        return missing
+
+    with pytest.raises(ValueError, match="unknown dependency 'missing'"):
+        run_cases(list_cases())
+
+
+def test_system_cannot_depend_on_input() -> None:
+    clear_registry()
+    case = Case(
+        name="system_input_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @case.input()
+    def payload() -> int:
+        return 1
+
+    @system()
+    def configured(payload: int) -> int:
+        return payload
+
+    @case.benchmark()
+    def bench(configured: int) -> int:
+        return configured
+
+    with pytest.raises(ValueError, match="cannot depend on input 'payload'"):
+        run_cases(list_cases())
+
+
+def test_input_and_system_name_ambiguity_raises_value_error() -> None:
+    clear_registry()
+    case = Case(
+        name="ambiguous_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    def system_payload() -> int:
+        return 2
+
+    system_payload.__name__ = "payload"
+    system()(system_payload)
+
+    def input_payload() -> int:
+        return 1
+
+    input_payload.__name__ = "payload"
+    case.input()(input_payload)
+
+    @case.benchmark()
+    def bench(payload: int) -> int:
+        return payload
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        run_cases(list_cases())
+
+
+def test_system_dependency_cycle_raises_value_error() -> None:
+    clear_registry()
+    case = Case(
+        name="cycle_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @system()
+    def first(second: int) -> int:
+        return second
+
+    @system()
+    def second(first: int) -> int:
+        return first
+
+    @case.benchmark()
+    def bench(first: int) -> int:
+        return first
+
+    with pytest.raises(ValueError, match="cycle"):
+        run_cases(list_cases())
+
+
+def test_function_scoped_system_reused_per_benchmark_and_not_shared() -> None:
+    clear_registry()
+    case = Case(
+        name="function_scope_case",
+        metric_type="time",
+        repeats=2,
+        min_iterations=3,
+        warmup_iterations=1,
+    )
+    creates = 0
+    teardowns = 0
+    first_ids: list[int] = []
+    second_ids: list[int] = []
+
+    @system(scope="function")
+    def token():
+        nonlocal creates, teardowns
+        creates += 1
+        value = creates
+        yield value
+        teardowns += 1
+
+    @case.benchmark(name="one")
+    def one(token: object) -> int:
+        first_ids.append(id(token))
+        return 1
+
+    @case.benchmark(name="two")
+    def two(token: object) -> int:
+        second_ids.append(id(token))
+        return 1
+
+    run_cases(list_cases())
+    assert creates == 2
+    assert teardowns == 2
+    assert len(set(first_ids)) == 1
+    assert len(set(second_ids)) == 1
+    assert first_ids[0] != second_ids[0]
+    assert len(first_ids) == 7
+    assert len(second_ids) == 7
+
+
+def test_module_scoped_system_shared_across_cases_in_one_run() -> None:
+    clear_registry()
+    first_case = Case(
+        name="module_scope_first",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    second_case = Case(
+        name="module_scope_second",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    creates = 0
+    teardowns = 0
+    seen_ids: list[int] = []
+
+    @system(scope="module")
+    def shared():
+        nonlocal creates, teardowns
+        creates += 1
+        value = object()
+        yield value
+        teardowns += 1
+
+    @first_case.benchmark()
+    def first(shared: object) -> int:
+        seen_ids.append(id(shared))
+        return 1
+
+    @second_case.benchmark()
+    def second(shared: object) -> int:
+        seen_ids.append(id(shared))
+        return 1
+
+    run_cases(list_cases())
+    assert creates == 1
+    assert teardowns == 1
+    assert len(set(seen_ids)) == 1
+
+
+def test_sync_system_teardown_runs_in_reverse_dependency_order() -> None:
+    clear_registry()
+    case = Case(
+        name="teardown_order_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    events: list[str] = []
+
+    @system()
+    def base():
+        events.append("enter base")
+        yield "base"
+        events.append("exit base")
+
+    @system()
+    def derived(base: str):
+        events.append("enter derived")
+        yield f"{base}:derived"
+        events.append("exit derived")
+
+    @case.benchmark()
+    def bench(derived: str) -> int:
+        events.append(f"bench:{derived}")
+        return 1
+
+    run_cases(list_cases())
+    assert events == [
+        "enter base",
+        "enter derived",
+        "bench:base:derived",
+        "exit derived",
+        "exit base",
+    ]
+
+
+def test_async_system_teardown_runs_after_benchmark_failure() -> None:
+    clear_registry()
+    case = Case(
+        name="teardown_failure_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+    events: list[str] = []
+
+    @system()
+    async def resource():
+        events.append("enter")
+        yield "resource"
+        events.append("exit")
+
+    @case.benchmark()
+    async def bench(resource: str) -> int:
+        events.append(resource)
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        run_cases(list_cases())
+    assert events == ["enter", "resource", "exit"]
+
+
+def test_module_scoped_system_cannot_depend_on_function_scoped_system() -> None:
+    clear_registry()
+    case = Case(
+        name="scope_mismatch_case",
+        metric_type="time",
+        repeats=1,
+        min_iterations=1,
+        warmup_iterations=0,
+    )
+
+    @system()
+    def inner() -> int:
+        return 1
+
+    @system(scope="module")
+    def outer(inner: int) -> int:
+        return inner
+
+    @case.benchmark()
+    def bench(outer: int) -> int:
+        return outer
+
+    with pytest.raises(ValueError, match="cannot depend on function-scoped system"):
+        run_cases(list_cases())
 
 
 def test_compare_runs_uses_current_result_threshold() -> None:
@@ -719,6 +1558,86 @@ def test_cli_run_supports_async_benchmark_module(tmp_path: Path) -> None:
     assert payload["benchmarks"][0]["benchmark_name"] == "async_mod_case"
 
 
+def test_cli_run_supports_standalone_system_module(tmp_path: Path) -> None:
+    clear_registry()
+
+    module_path = tmp_path / "bench_system_mod.py"
+    module_path.write_text(
+        "from benchbro import Case, system\n"
+        "@system(scope='module')\n"
+        "def shared_value():\n"
+        "    return 5\n"
+        "case = Case(name='system_mod_group', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.benchmark(name='system_mod_case')\n"
+        "def system_mod_case(shared_value: int):\n"
+        "    return shared_value\n",
+        encoding="utf-8",
+    )
+
+    output_path = tmp_path / "system_out.json"
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        code = main(
+            [
+                str(module_path),
+                "--output-json",
+                str(output_path),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+    finally:
+        os.chdir(original_cwd)
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["benchmarks"][0]["case_name"] == "system_mod_group"
+    assert payload["benchmarks"][0]["benchmark_name"] == "system_mod_case"
+
+
+def test_cli_run_supports_command_benchmark_module(tmp_path: Path) -> None:
+    clear_registry()
+
+    module_path = tmp_path / "bench_command_mod.py"
+    module_path.write_text(
+        "import sys\n"
+        "from benchbro import Case, CommandSpec\n"
+        "case = Case(name='command_mod_group', metric_type='time', repeats=1, min_iterations=1, warmup_iterations=0)\n"
+        "@case.subprocess(name='command_mod_case')\n"
+        "def command_mod_case() -> CommandSpec:\n"
+        "    return CommandSpec(argv=[sys.executable, '-c', 'pass'])\n",
+        encoding="utf-8",
+    )
+
+    output_path = tmp_path / "command_out.json"
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        code = main(
+            [
+                str(module_path),
+                "--output-json",
+                str(output_path),
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+    finally:
+        os.chdir(original_cwd)
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["benchmarks"][0]["case_name"] == "command_mod_group"
+    assert payload["benchmarks"][0]["benchmark_name"] == "command_mod_case"
+
+
 def test_cli_run_accepts_python_file_path(tmp_path: Path) -> None:
     clear_registry()
 
@@ -992,8 +1911,32 @@ def test_cli_no_compare_skips_comparison_and_returns_zero(
     original_cwd = Path.cwd()
     try:
         os.chdir(repo_root)
-        assert main([str(module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"]) == 0
-        code = main([str(module), "--no-compare", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        assert (
+            main(
+                [
+                    str(module),
+                    "--warmup",
+                    "0",
+                    "--repeats",
+                    "1",
+                    "--min-iterations",
+                    "1",
+                ]
+            )
+            == 0
+        )
+        code = main(
+            [
+                str(module),
+                "--no-compare",
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert code == 0
     finally:
         os.chdir(original_cwd)
@@ -1032,11 +1975,41 @@ def test_cli_no_compare_merges_new_benchmark(tmp_path: Path) -> None:
     original_cwd = Path.cwd()
     try:
         os.chdir(repo_root)
-        assert main([str(first_module), "--warmup", "0", "--repeats", "1", "--min-iterations", "1"]) == 0
-        assert main([str(second_module), "--no-compare", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"]) == 0
+        assert (
+            main(
+                [
+                    str(first_module),
+                    "--warmup",
+                    "0",
+                    "--repeats",
+                    "1",
+                    "--min-iterations",
+                    "1",
+                ]
+            )
+            == 0
+        )
+        assert (
+            main(
+                [
+                    str(second_module),
+                    "--no-compare",
+                    "--warmup",
+                    "0",
+                    "--repeats",
+                    "1",
+                    "--min-iterations",
+                    "1",
+                ]
+            )
+            == 0
+        )
         baseline_local = repo_root / ".benchbro" / "baseline.local.json"
         payload = json.loads(baseline_local.read_text(encoding="utf-8"))
-        names = {(item["case_name"], item["benchmark_name"]) for item in payload["benchmarks"]}
+        names = {
+            (item["case_name"], item["benchmark_name"])
+            for item in payload["benchmarks"]
+        }
         assert ("no_compare_merge_case", "one") in names
         assert ("no_compare_merge_case", "two") in names
     finally:
@@ -1063,7 +2036,18 @@ def test_cli_histogram_outputs_for_time_benchmarks(
     original_cwd = Path.cwd()
     try:
         os.chdir(repo_root)
-        code = main([str(module), "--histogram", "--warmup", "0", "--repeats", "5", "--min-iterations", "1"])
+        code = main(
+            [
+                str(module),
+                "--histogram",
+                "--warmup",
+                "0",
+                "--repeats",
+                "5",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert code == 0
     finally:
         os.chdir(original_cwd)
@@ -1091,7 +2075,18 @@ def test_cli_histogram_memory_only_prints_info(
     original_cwd = Path.cwd()
     try:
         os.chdir(repo_root)
-        code = main([str(module), "--histogram", "--warmup", "0", "--repeats", "2", "--min-iterations", "1"])
+        code = main(
+            [
+                str(module),
+                "--histogram",
+                "--warmup",
+                "0",
+                "--repeats",
+                "2",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert code == 0
     finally:
         os.chdir(original_cwd)
@@ -1117,8 +2112,34 @@ def test_cli_ci_no_compare_uses_ci_baseline_yaml(tmp_path: Path) -> None:
     original_cwd = Path.cwd()
     try:
         os.chdir(repo_root)
-        assert main([str(module), "--ci", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"]) == 0
-        code = main([str(module), "--ci", "--no-compare", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        assert (
+            main(
+                [
+                    str(module),
+                    "--ci",
+                    "--warmup",
+                    "0",
+                    "--repeats",
+                    "1",
+                    "--min-iterations",
+                    "1",
+                ]
+            )
+            == 0
+        )
+        code = main(
+            [
+                str(module),
+                "--ci",
+                "--no-compare",
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert code == 0
         assert (repo_root / ".benchbro/baseline.ci.json").exists()
     finally:
@@ -1142,7 +2163,19 @@ def test_cli_new_baseline_takes_precedence_over_no_compare(tmp_path: Path) -> No
     original_cwd = Path.cwd()
     try:
         os.chdir(repo_root)
-        code = main([str(module), "--new-baseline", "--no-compare", "--warmup", "0", "--repeats", "1", "--min-iterations", "1"])
+        code = main(
+            [
+                str(module),
+                "--new-baseline",
+                "--no-compare",
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
         assert code == 0
         assert (repo_root / ".benchbro" / "baseline.local.json").exists()
     finally:
@@ -1198,8 +2231,12 @@ def test_cli_run_uses_default_benchmarks_directory(tmp_path: Path) -> None:
         )
         assert code == 0
         payload = json.loads(out_json.read_text(encoding="utf-8"))
-        assert {item["case_name"] for item in payload["benchmarks"]} == {"default_target_case"}
-        assert {item["benchmark_name"] for item in payload["benchmarks"]} == {"default_target_bench"}
+        assert {item["case_name"] for item in payload["benchmarks"]} == {
+            "default_target_case"
+        }
+        assert {item["benchmark_name"] for item in payload["benchmarks"]} == {
+            "default_target_bench"
+        }
         assert out_csv.exists()
     finally:
         os.chdir(original_cwd)
@@ -1264,7 +2301,9 @@ def test_cli_uses_pyproject_ini_options_for_paths_and_pattern(tmp_path: Path) ->
 
     payload = json.loads(out_json.read_text(encoding="utf-8"))
     assert {item["case_name"] for item in payload["benchmarks"]} == {"configured_case"}
-    assert {item["benchmark_name"] for item in payload["benchmarks"]} == {"configured_bench"}
+    assert {item["benchmark_name"] for item in payload["benchmarks"]} == {
+        "configured_bench"
+    }
 
 
 def test_cli_run_merges_new_benchmark_into_existing_baseline(tmp_path: Path) -> None:
