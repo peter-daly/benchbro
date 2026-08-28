@@ -1,13 +1,13 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-yaml
       - id: end-of-file-fixer
       - id: trailing-whitespace
 
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.7
+    rev: v1.7.12
     hooks:
       - id: actionlint
 
@@ -31,5 +31,10 @@ repos:
       - id: deptry
         name: deptry
         entry: uv run deptry .
+        language: system
+        pass_filenames: false
+      - id: yamllint
+        name: yamllint
+        entry: uv run yamllint .github .pre-commit-config.yaml .yamllint.yml
         language: system
         pass_filenames: false

@@ -1,0 +1,72 @@
+:root {
+  --md-primary-fg-color: #5c3dc4;
+  --md-primary-fg-color--light: #8067dc;
+  --md-primary-fg-color--dark: #412a96;
+  --bb-accent: #ffb300;
+}
+
+.md-grid {
+  max-width: 76rem;
+}
+
+.bb-hero {
+  align-items: center;
+  display: grid;
+  gap: 2.5rem;
+  grid-template-columns: minmax(0, 1.5fr) minmax(14rem, 0.7fr);
+  margin: 1.25rem 0 2.5rem;
+}
+
+.bb-hero h1 {
+  font-size: clamp(2.3rem, 6vw, 4.5rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  margin-bottom: 1rem;
+}
+
+.bb-hero p {
+  font-size: 1.05rem;
+  max-width: 42rem;
+}
+
+.bb-hero img {
+  filter: drop-shadow(0 1rem 1.5rem rgb(36 23 87 / 24%));
+  width: 100%;
+}
+
+.bb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1.4rem;
+}
+
+.bb-actions .md-button--primary {
+  background-color: var(--bb-accent);
+  border-color: var(--bb-accent);
+  color: #241757;
+}
+
+.bb-metric {
+  color: var(--md-primary-fg-color);
+  font-size: 1.7rem;
+  font-weight: 750;
+}
+
+[data-md-color-scheme="slate"] .bb-metric {
+  color: #b8a8ff;
+}
+
+@media screen and (max-width: 44.9375em) {
+  .bb-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .bb-hero > p {
+    justify-self: center;
+    margin: 0;
+    max-width: 15rem;
+    order: -1;
+  }
+}

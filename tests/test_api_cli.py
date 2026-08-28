@@ -219,6 +219,8 @@ def test_case_memory_result_shape() -> None:
     assert result.metric_type == "memory"
     assert "peak_alloc_bytes" in result.metrics
     assert "net_alloc_bytes" in result.metrics
+    assert "peak_alloc_standard_error_bytes" in result.metrics
+    assert "net_alloc_standard_error_bytes" in result.metrics
     assert result.time_samples_s == []
 
 
@@ -338,7 +340,7 @@ def test_command_benchmark_requires_commandspec() -> None:
 
     @case.subprocess()
     def run_cli() -> CommandSpec:
-        return "not-a-command"  # type: ignore[return-value]
+        return "not-a-command"  # ty: ignore[invalid-return-type]
 
     with pytest.raises(ValueError, match="must return CommandSpec"):
         run_cases(list_cases())
@@ -352,7 +354,7 @@ def test_commandspec_validates_fields() -> None:
     with pytest.raises(ValueError, match="cannot be empty"):
         CommandSpec(argv=["echo"], expected_exit_codes=())
     with pytest.raises(ValueError, match="stdout must be"):
-        CommandSpec(argv=["echo"], stdout="capture")  # type: ignore[arg-type]
+        CommandSpec(argv=["echo"], stdout="capture")  # ty: ignore[invalid-argument-type]
 
 
 def test_command_benchmark_applies_cwd(tmp_path: Path) -> None:
@@ -419,11 +421,9 @@ def test_command_benchmark_defaults_stdout_and_stderr_to_devnull(
     @case.subprocess()
     def run_cli() -> CommandSpec:
         return _python_command(
-            (
-                "import sys; "
-                "print('stdout-visible', flush=True); "
-                "print('stderr-visible', file=sys.stderr, flush=True)"
-            )
+            "import sys; "
+            "print('stdout-visible', flush=True); "
+            "print('stderr-visible', file=sys.stderr, flush=True)"
         )
 
     run_cases(list_cases())
@@ -1843,7 +1843,7 @@ def test_cli_run_creates_repo_local_baseline_json_when_missing(tmp_path: Path) -
         os.chdir(original_cwd)
 
 
-def test_cli_run_creates_repo_ci_baseline_yaml_when_ci_flag_set(
+def test_cli_run_requires_explicit_ci_baseline_creation(
     tmp_path: Path,
 ) -> None:
     clear_registry()
@@ -1877,11 +1877,27 @@ def test_cli_run_creates_repo_ci_baseline_yaml_when_ci_flag_set(
                 "1",
             ]
         )
-        assert code == 0
+        assert code == 1
 
         baseline_json = repo_root / ".benchbro" / "baseline.local.json"
         baseline_ci_yaml = repo_root / ".benchbro/baseline.ci.json"
         assert not baseline_json.exists()
+        assert not baseline_ci_yaml.exists()
+
+        code = main(
+            [
+                str(benchmark_file),
+                "--ci",
+                "--new-baseline",
+                "--warmup",
+                "0",
+                "--repeats",
+                "1",
+                "--min-iterations",
+                "1",
+            ]
+        )
+        assert code == 0
         assert baseline_ci_yaml.exists()
         payload = json.loads(baseline_ci_yaml.read_text(encoding="utf-8"))
         assert payload["benchmarks"][0]["case_name"] == "baseline_ci_case"
@@ -2117,6 +2133,7 @@ def test_cli_ci_no_compare_uses_ci_baseline_yaml(tmp_path: Path) -> None:
                 [
                     str(module),
                     "--ci",
+                    "--new-baseline",
                     "--warmup",
                     "0",
                     "--repeats",

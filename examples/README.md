@@ -26,8 +26,28 @@ uv run benchbro examples/e2e_benchmarks.py
 ```
 
 The output table shows:
+
 - `case`
 - `benchmark`
 - `metric_type`
-- `threshold %`
 - metric keys and values
+
+When a baseline is present, the comparison table also shows warning/error
+thresholds, percentage change, and status.
+
+## Advanced gallery
+
+`advanced_benchmarks.py` separately demonstrates:
+
+- adaptive, confidence-bounded sampling
+- Cartesian parameter sets with readable IDs
+- session-scoped compiled resources
+- explicit setup and teardown timing boundaries
+- realistic JSON serialization and text parsing workloads
+
+Explore it without changing a baseline:
+
+```bash
+uv run benchbro list examples/advanced_benchmarks.py --verbose
+uv run benchbro run examples/advanced_benchmarks.py --no-compare
+```

@@ -1,0 +1,113 @@
+site_name: BenchBro
+site_description: Reproducible, noise-aware Python benchmarking
+site_url: https://peter-daly.github.io/benchbro/
+repo_name: peter-daly/benchbro
+repo_url: https://github.com/peter-daly/benchbro
+edit_uri: edit/main/docs/
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quick start: getting-started/quick-start.md
+      - Agent skill: getting-started/agent-skill.md
+  - Guides:
+      - Defining benchmarks: guides/defining-benchmarks.md
+      - Systems and inputs: guides/systems-and-inputs.md
+      - Reliable measurements: guides/reliable-measurements.md
+      - Subprocesses and isolation: guides/subprocesses-and-isolation.md
+      - Configuration: guides/configuration.md
+      - Baselines and history: guides/baselines-and-history.md
+      - Profiling and pytest: guides/profiling-and-pytest.md
+  - Reference:
+      - Command line: reference/cli.md
+      - Python API: reference/api.md
+      - Result schema: reference/result-schema.md
+  - Project:
+      - Architecture: architecture.md
+      - Contributing: project/contributing.md
+      - Changelog: project/changelog.md
+      - Security: project/security.md
+      - Maintainer setup: maintenance.md
+
+theme:
+  name: material
+  favicon: assets/images/mascot-bb.png
+  logo: assets/images/mascot-bb.png
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            docstring_style: google
+            heading_level: 2
+            members_order: source
+            show_root_heading: true
+            show_source: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            signature_crossrefs: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/peter-daly/benchbro
+      name: BenchBro on GitHub
+
+copyright: Copyright &copy; 2026 Pete Daly

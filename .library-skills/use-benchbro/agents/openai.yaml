@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use BenchBro"
+  short_description: "Design reliable Python benchmarks"
+  default_prompt: "Use $use-benchbro to add a reliable benchmark to this Python project."

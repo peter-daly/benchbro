@@ -2,18 +2,27 @@ name: Release
 
 on:
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: write
+  id-token: write
+
+concurrency:
+  group: release-pypi
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: 0.12.7
 
 jobs:
   release:
     runs-on: ubuntu-latest
-
+    environment:
+      name: pypi
+      url: https://pypi.org/project/benchbro/
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
 
@@ -25,33 +34,68 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
 
-      - name: Build package
-        run: uv build
-
-      - name: Publish to PyPI
-        env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: uv publish --token "${PYPI_TOKEN}"
-
-      - name: Tag release from uv version
+      - name: Verify project version is newer than every release tag
         run: |
-          VERSION="$(uv version --short)"
-          TAG="v${VERSION}"
+          uv run --no-project --with packaging python - <<'PY'
+          import subprocess
+          from pathlib import Path
 
+          import tomllib
+          from packaging.version import InvalidVersion, Version
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          current = Version(project["project"]["version"])
+          versions = []
+          for tag in subprocess.check_output(
+              ["git", "tag", "--list", "v*"], text=True
+          ).splitlines():
+              try:
+                  versions.append(Version(tag.removeprefix("v")))
+              except InvalidVersion:
+                  continue
+          latest = max(versions) if versions else None
+          if latest is not None and current <= latest:
+              raise SystemExit(
+                  f"Project version {current} must be newer than latest tag {latest}"
+              )
+          print(f"Releasing {current}; latest tag is {latest or '<none>'}")
+          PY
+
+      - name: Build and validate package
+        run: |
+          uv build
+          uvx --from twine==7.0.0 twine check dist/*
+
+      - name: Verify tag does not already exist
+        run: |
+          TAG="v$(uv version --short)"
           if git rev-parse "${TAG}" >/dev/null 2>&1; then
             echo "Tag ${TAG} already exists." >&2
             exit 1
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Publish to PyPI with trusted publishing
+        if: vars.PYPI_TRUSTED_PUBLISHING == 'true'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
 
-          git tag "${TAG}"
-          git push origin "${TAG}"
+      - name: Publish to PyPI with legacy token
+        if: vars.PYPI_TRUSTED_PUBLISHING != 'true'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Create tagged GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(uv version --short)"
+          gh release create "${TAG}" dist/* --generate-notes --title "${TAG}"
