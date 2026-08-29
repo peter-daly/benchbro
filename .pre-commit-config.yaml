@@ -3,6 +3,11 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-yaml
+        exclude: ^mkdocs\.yml$
+      - id: check-yaml
+        name: check mkdocs yaml
+        args: [--unsafe]
+        files: ^mkdocs\.yml$
       - id: end-of-file-fixer
       - id: trailing-whitespace
 
@@ -35,6 +40,6 @@ repos:
         pass_filenames: false
       - id: yamllint
         name: yamllint
-        entry: uv run yamllint .github .pre-commit-config.yaml .yamllint.yml
+        entry: uv run yamllint .github .pre-commit-config.yaml .yamllint.yml mkdocs.yml
         language: system
         pass_filenames: false
